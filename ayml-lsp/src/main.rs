@@ -339,11 +339,7 @@ fn position_to_offset(text: &str, pos: Position) -> usize {
 /// - Scalar values: highlight the whole `key: value` pair.
 /// - Block values (maps, non-empty seqs): highlight just `key:`.
 /// - Non-mapping paths (e.g. sequence indices): highlight the value span.
-fn compute_hover_range(
-    root: &ayml_core::Node,
-    path: &[String],
-    text: &str,
-) -> Option<Range> {
+fn compute_hover_range(root: &ayml_core::Node, path: &[String], text: &str) -> Option<Range> {
     if path.is_empty() {
         return Some(span_to_range(text, root.span));
     }
@@ -405,8 +401,15 @@ fn compute_hover_range(
     // Stop at whitespace, `{`, `,`, `-`, or start of string.
     let key_start = text[..key_end]
         .bytes()
-        .rposition(|b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r'
-            || b == b'{' || b == b',' || b == b'-')
+        .rposition(|b| {
+            b == b' '
+                || b == b'\t'
+                || b == b'\n'
+                || b == b'\r'
+                || b == b'{'
+                || b == b','
+                || b == b'-'
+        })
         .map(|i| i + 1)
         .unwrap_or(0);
 
@@ -426,10 +429,7 @@ fn compute_hover_range(
 /// Check if the byte offset falls within a comment — either a full comment
 /// line (first non-space is `#`) or an inline comment (after ` #` on a line).
 fn is_in_comment(text: &str, offset: usize) -> bool {
-    let line_start = text[..offset]
-        .rfind('\n')
-        .map(|i| i + 1)
-        .unwrap_or(0);
+    let line_start = text[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let line = &text[line_start..];
 
     // Full comment line: first non-whitespace is `#`.
