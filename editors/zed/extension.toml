@@ -7,7 +7,7 @@ description = "AYML language support for Zed"
 
 [grammars.ayml]
 repository = "file:///Users/alex/Projects/ayml/tree-sitter-ayml"
-rev = "9cdf3987dcc5511ebcab0e8a62141db095a7e6e8"
+rev = "bf300d1d766ae7e47887a4e079a69de4b6b0ca06"
 
 [language_servers.ayml-lsp]
 name = "ayml-lsp"
