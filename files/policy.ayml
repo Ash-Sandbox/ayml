@@ -2,7 +2,11 @@
 
 schema_version: 1
 files:
-  rules: []
+  rules:
+  - path: ./**
+  - path: /Applications/Visual Studio Code.app/Contents/Resources/app/bin/code
+    operations:
+    - read
 network:
   # Network access rules
   rules:

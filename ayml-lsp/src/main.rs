@@ -289,6 +289,12 @@ fn handle_hover(
     // Map cursor position to byte offset, then to a path in the node tree.
     let pos = params.text_document_position_params.position;
     let offset = position_to_offset(text, pos);
+
+    // Don't show hover on comment lines.
+    if is_in_comment(text, offset) {
+        return None;
+    }
+
     let path_segments = locate::path_at_offset(&node, offset);
     let path_refs: Vec<&str> = path_segments.iter().map(|s| s.as_str()).collect();
 
@@ -324,6 +330,44 @@ fn position_to_offset(text: &str, pos: Position) -> usize {
         }
     }
     text.len()
+}
+
+/// Check if the byte offset falls within a comment — either a full comment
+/// line (first non-space is `#`) or an inline comment (after ` #` on a line).
+fn is_in_comment(text: &str, offset: usize) -> bool {
+    let line_start = text[..offset]
+        .rfind('\n')
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let line = &text[line_start..];
+
+    // Full comment line: first non-whitespace is `#`.
+    if line.bytes().find(|&b| b != b' ' && b != b'\t') == Some(b'#') {
+        return true;
+    }
+
+    // Inline comment: check if offset is at or past a ` #` on this line.
+    // We need to skip `#` inside quoted strings.
+    let offset_in_line = offset - line_start;
+    let mut in_quote = false;
+    let mut i = 0;
+    let bytes = line.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] == b'"' {
+            in_quote = !in_quote;
+        } else if !in_quote && bytes[i] == b'#' {
+            // Found a comment marker — cursor is in a comment if at or past it.
+            if offset_in_line >= i {
+                return true;
+            }
+            break;
+        } else if bytes[i] == b'\n' || bytes[i] == b'\r' {
+            break;
+        }
+        i += 1;
+    }
+
+    false
 }
 
 fn fetch_schema(url: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
