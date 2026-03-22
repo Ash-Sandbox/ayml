@@ -61,3 +61,28 @@ fn action_type() {
     eprintln!("action hover:\n{content}\n");
     assert!(!content.is_empty());
 }
+
+#[test]
+fn operations_key_shows_enum_values() {
+    let root = load_policy_schema();
+    let sub = schema::resolve_sub_schema(&root, &["files", "rules", "0", "operations"]).unwrap();
+    let content = schema::hover_content(&root, sub).unwrap();
+    eprintln!("operations hover:\n{content}\n");
+    assert!(
+        content.contains("read") && content.contains("write") && content.contains("delete"),
+        "expected enum values in operations hover, got:\n{content}"
+    );
+}
+
+#[test]
+fn operations_element_shows_enum_values() {
+    let root = load_policy_schema();
+    let sub =
+        schema::resolve_sub_schema(&root, &["files", "rules", "0", "operations", "0"]).unwrap();
+    let content = schema::hover_content(&root, sub).unwrap();
+    eprintln!("operations[0] hover:\n{content}\n");
+    assert!(
+        content.contains("read") && content.contains("write") && content.contains("delete"),
+        "expected enum values in operations element hover, got:\n{content}"
+    );
+}

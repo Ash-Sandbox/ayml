@@ -157,11 +157,19 @@ fn hover_content_inner(root: &Json, schema: &Json, effective: Option<&Json>) -> 
         parts.push(format!("**Default:** `{default}`"));
     }
 
-    let enum_vals = schema.get("enum").and_then(|e| e.as_array()).or_else(|| {
-        effective
-            .and_then(|e| e.get("enum"))
-            .and_then(|e| e.as_array())
-    });
+    let enum_vals = schema
+        .get("enum")
+        .and_then(|e| e.as_array())
+        .or_else(|| {
+            effective
+                .and_then(|e| e.get("enum"))
+                .and_then(|e| e.as_array())
+        })
+        .or_else(|| {
+            // For arrays of enums, pull enum values from the items schema.
+            resolve_array_items_enum(root, schema)
+                .or_else(|| effective.and_then(|e| resolve_array_items_enum(root, e)))
+        });
     if let Some(enum_vals) = enum_vals {
         let vals: Vec<String> = enum_vals.iter().map(|v| format!("`{v}`")).collect();
         parts.push(format!("**Allowed values:** {}", vals.join(", ")));
@@ -195,6 +203,41 @@ fn hover_content_inner(root: &Json, schema: &Json, effective: Option<&Json>) -> 
     } else {
         Some(parts.join("\n\n"))
     }
+}
+
+/// If the schema is an array type, resolve its items and return their enum values.
+/// Follows `$ref`, `allOf`, `anyOf` to find the items schema.
+fn resolve_array_items_enum<'a>(root: &'a Json, schema: &'a Json) -> Option<&'a Vec<Json>> {
+    // Direct array with items
+    if schema.get("type").and_then(|t| t.as_str()) == Some("array")
+        && let Some(items) = schema.get("items")
+    {
+        let resolved = resolve_refs(root, items);
+        if let Some(enum_vals) = resolved.get("enum").and_then(|e| e.as_array()) {
+            return Some(enum_vals);
+        }
+    }
+    // allOf: check each sub-schema
+    if let Some(all) = schema.get("allOf").and_then(|v| v.as_array()) {
+        for sub in all {
+            let resolved = resolve_refs(root, sub);
+            if let Some(vals) = resolve_array_items_enum(root, resolved) {
+                return Some(vals);
+            }
+        }
+    }
+    // anyOf/oneOf: check each variant
+    for keyword in &["anyOf", "oneOf"] {
+        if let Some(variants) = schema.get(*keyword).and_then(|v| v.as_array()) {
+            for variant in variants {
+                let resolved = resolve_refs(root, variant);
+                if let Some(vals) = resolve_array_items_enum(root, resolved) {
+                    return Some(vals);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Extract a human-readable type string from a schema node.
