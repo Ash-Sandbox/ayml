@@ -8,62 +8,66 @@ pub fn resolve_sub_schema<'a>(root: &'a Json, path: &[&str]) -> Option<&'a Json>
 
     for segment in path {
         schema = resolve_refs(root, schema);
-
-        if let Some(next) = step_into(root, schema, segment) {
-            schema = next;
-            continue;
-        }
-
-        // Try anyOf/oneOf variants — find the first variant that can resolve
-        // this path segment.
-        let mut found = false;
-        for keyword in &["anyOf", "oneOf"] {
-            if let Some(variants) = schema.get(*keyword).and_then(|v| v.as_array()) {
-                for variant in variants {
-                    let resolved = resolve_refs(root, variant);
-                    if let Some(next) = step_into(root, resolved, segment) {
-                        schema = next;
-                        found = true;
-                        break;
-                    }
-                }
-                if found {
-                    break;
-                }
-            }
-        }
-        if found {
-            continue;
-        }
-
-        return None;
+        schema = try_step(root, schema, segment)?;
     }
 
     Some(resolve_refs(root, schema))
 }
 
-/// Try to step into a schema by one path segment.
-fn step_into<'a>(root: &'a Json, schema: &'a Json, segment: &str) -> Option<&'a Json> {
+/// Try to step into a schema by one path segment, resolving through
+/// `$ref`, `allOf`, `anyOf`, and `oneOf` as needed.
+fn try_step<'a>(root: &'a Json, schema: &'a Json, segment: &str) -> Option<&'a Json> {
+    // Direct step.
+    if let Some(next) = step_into(schema, segment) {
+        return Some(next);
+    }
+
+    // Try through allOf — merge all sub-schemas and try each.
+    if let Some(all) = schema.get("allOf").and_then(|v| v.as_array()) {
+        for sub in all {
+            let resolved = resolve_refs(root, sub);
+            if let Some(next) = try_step(root, resolved, segment) {
+                return Some(next);
+            }
+        }
+    }
+
+    // Try through anyOf/oneOf variants.
+    for keyword in &["anyOf", "oneOf"] {
+        if let Some(variants) = schema.get(*keyword).and_then(|v| v.as_array()) {
+            for variant in variants {
+                let resolved = resolve_refs(root, variant);
+                if let Some(next) = try_step(root, resolved, segment) {
+                    return Some(next);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Try to step into a schema by one path segment (direct lookup only).
+fn step_into<'a>(schema: &'a Json, segment: &str) -> Option<&'a Json> {
     // Try `properties/<key>`
     if let Some(sub) = schema.get("properties").and_then(|p| p.get(segment)) {
         return Some(sub);
     }
 
     // Try `items` (array index)
-    if segment.parse::<usize>().is_ok()
-        && let Some(items) = schema.get("items")
-    {
-        return Some(items);
+    if segment.parse::<usize>().is_ok() {
+        if let Some(items) = schema.get("items") {
+            return Some(items);
+        }
     }
 
     // Try `additionalProperties` as object schema
-    if let Some(additional) = schema.get("additionalProperties")
-        && additional.is_object()
-    {
-        return Some(additional);
+    if let Some(additional) = schema.get("additionalProperties") {
+        if additional.is_object() {
+            return Some(additional);
+        }
     }
 
-    let _ = root; // used by caller for ref resolution
     None
 }
 
@@ -101,9 +105,16 @@ pub fn hover_content(schema: &Json) -> Option<String> {
     hover_content_inner(schema, effective)
 }
 
-/// For anyOf/oneOf like `[{ $ref: "..." }, { type: "null" }]`, return the
-/// non-null variant so we can extract its description/type.
+/// For composition schemas, return the most informative sub-schema:
+/// - `allOf`: return the first sub-schema (typically the `$ref`)
+/// - `anyOf`/`oneOf`: return the first non-null variant
 fn effective_schema(schema: &Json) -> Option<&Json> {
+    // allOf: return the first entry (usually the primary $ref)
+    if let Some(all) = schema.get("allOf").and_then(|v| v.as_array()) {
+        if let Some(first) = all.first() {
+            return Some(first);
+        }
+    }
     for keyword in &["anyOf", "oneOf"] {
         if let Some(variants) = schema.get(*keyword).and_then(|v| v.as_array()) {
             for variant in variants {

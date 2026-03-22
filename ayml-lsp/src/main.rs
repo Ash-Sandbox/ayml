@@ -302,14 +302,7 @@ fn handle_hover(
     let sub_schema = schema::resolve_sub_schema(&schema_value, &path_refs)?;
     let content = schema::hover_content(sub_schema)?;
 
-    // Resolve the node at this path to get its span for the hover range.
-    let path_str = if path_segments.is_empty() {
-        String::new()
-    } else {
-        format!("/{}", path_segments.join("/"))
-    };
-    let hover_range = resolve_instance_path(&node, &path_str)
-        .map(|span| span_to_range(text, span));
+    let hover_range = compute_hover_range(&node, &path_segments, text);
 
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
@@ -339,6 +332,121 @@ fn position_to_offset(text: &str, pos: Position) -> usize {
         }
     }
     text.len()
+}
+
+/// Compute the hover highlight range for a mapping entry.
+///
+/// - Scalar values: highlight the whole `key: value` pair.
+/// - Block values (maps, non-empty seqs): highlight just `key:`.
+/// - Non-mapping paths (e.g. sequence indices): highlight the value span.
+fn compute_hover_range(
+    root: &ayml_core::Node,
+    path: &[String],
+    text: &str,
+) -> Option<Range> {
+    if path.is_empty() {
+        return Some(span_to_range(text, root.span));
+    }
+
+    // Walk to the parent node and get the last segment (the key).
+    let mut current = root;
+    for segment in &path[..path.len() - 1] {
+        match &current.value {
+            ayml_core::Value::Map(map) => {
+                let key = ayml_core::MapKey::String(segment.clone());
+                current = map.get(&key)?;
+            }
+            ayml_core::Value::Seq(items) => {
+                let idx: usize = segment.parse().ok()?;
+                current = items.get(idx)?;
+            }
+            _ => return None,
+        }
+    }
+
+    let last_segment = path.last()?;
+
+    // If parent is a sequence, highlight `- value` for scalars.
+    let ayml_core::Value::Map(map) = &current.value else {
+        if let ayml_core::Value::Seq(items) = &current.value {
+            let idx: usize = last_segment.parse().ok()?;
+            let item = items.get(idx)?;
+            if item.value.is_scalar() {
+                // Find `- ` before the value on the same line.
+                let line_start = text[..item.span.start]
+                    .rfind('\n')
+                    .map(|i| i + 1)
+                    .unwrap_or(0);
+                let dash_start = line_start
+                    + text[line_start..]
+                        .bytes()
+                        .take_while(|&b| b == b' ' || b == b'\t')
+                        .count();
+                let start = offset_to_position(text, dash_start);
+                let end = offset_to_position(text, item.span.end);
+                return Some(Range::new(start, end));
+            }
+            return Some(span_to_range(text, item.span));
+        }
+        return None;
+    };
+
+    let key = ayml_core::MapKey::String(last_segment.clone());
+    let value_node = map.get(&key)?;
+
+    let is_block = matches!(
+        &value_node.value,
+        ayml_core::Value::Map(m) if !m.is_empty()
+    ) || matches!(
+        &value_node.value,
+        ayml_core::Value::Seq(s) if !s.is_empty()
+    );
+
+    // For block values the value span is on a different line than the key.
+    // For scalar values the key and value are on the same line.
+    // In both cases, find the key's line by searching backwards from the
+    // value span for the `key:` text.
+    let key_line_start = if is_block {
+        // Key is on the line *before* the value span. Find the line
+        // containing the `:` that introduced this value.
+        let before_value = &text[..value_node.span.start];
+        // Find the last `:\n` or `: ` before the value — that's on the key line.
+        let colon = before_value.rfind(':')?;
+        text[..colon].rfind('\n').map(|i| i + 1).unwrap_or(0)
+    } else {
+        text[..value_node.span.start]
+            .rfind('\n')
+            .map(|i| i + 1)
+            .unwrap_or(0)
+    };
+
+    // Skip indentation.
+    let key_start = key_line_start
+        + text[key_line_start..]
+            .bytes()
+            .take_while(|&b| b == b' ' || b == b'\t')
+            .count();
+    // Skip `- ` prefix for sequence entries (compact mappings).
+    let key_start = if text[key_start..].starts_with("- ") {
+        key_start + 2
+    } else {
+        key_start
+    };
+
+    if is_block {
+        // Highlight `key:` (including the colon).
+        let colon_end = text[key_start..]
+            .find(':')
+            .map(|i| key_start + i + 1)?;
+        let start = offset_to_position(text, key_start);
+        let end = offset_to_position(text, colon_end);
+        Some(Range::new(start, end))
+    } else {
+        // Scalar or empty collection: highlight the whole `key: value` pair.
+        let start = offset_to_position(text, key_start);
+        let end = offset_to_position(text, value_node.span.end);
+        Some(Range::new(start, end))
+    }
 }
 
 /// Check if the byte offset falls within a comment — either a full comment
@@ -397,4 +505,202 @@ fn send_notification<N: lsp_types::notification::Notification>(
     let not = Notification::new(N::METHOD.to_string(), params);
     connection.sender.send(Message::Notification(not))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: parse input and compute hover range for the given path.
+    fn hover_range_for(input: &str, path: &[&str]) -> Option<Range> {
+        let node = ayml_core::parse(input).unwrap();
+        let path: Vec<String> = path.iter().map(|s| s.to_string()).collect();
+        compute_hover_range(&node, &path, input)
+    }
+
+    /// Extract the highlighted text from a Range.
+    fn range_text(input: &str, range: Range) -> String {
+        let start = position_to_offset(input, range.start);
+        let end = position_to_offset(input, range.end);
+        input[start..end].to_string()
+    }
+
+    // ── compute_hover_range: scalar values ──────────────────────
+
+    #[test]
+    fn scalar_value_highlights_whole_pair() {
+        let input = "name: Alice";
+        let range = hover_range_for(input, &["name"]).unwrap();
+        assert_eq!(range_text(input, range), "name: Alice");
+    }
+
+    #[test]
+    fn scalar_value_skips_indentation() {
+        let input = "outer:\n  name: Alice";
+        let range = hover_range_for(input, &["outer", "name"]).unwrap();
+        assert_eq!(range_text(input, range), "name: Alice");
+    }
+
+    #[test]
+    fn scalar_value_in_compact_mapping_skips_dash() {
+        let input = "- host: *.github.com";
+        let range = hover_range_for(input, &["0", "host"]).unwrap();
+        assert_eq!(range_text(input, range), "host: *.github.com");
+    }
+
+    #[test]
+    fn scalar_value_with_inline_comment_excludes_comment() {
+        let input = "host: example.com # a comment";
+        let range = hover_range_for(input, &["host"]).unwrap();
+        assert_eq!(range_text(input, range), "host: example.com");
+    }
+
+    #[test]
+    fn scalar_value_deeply_nested() {
+        let input = "a:\n  b:\n    c: 42";
+        let range = hover_range_for(input, &["a", "b", "c"]).unwrap();
+        assert_eq!(range_text(input, range), "c: 42");
+    }
+
+    // ── compute_hover_range: block values ───────────────────────
+
+    #[test]
+    fn block_mapping_highlights_key_colon() {
+        let input = "network:\n  rules: ok";
+        let range = hover_range_for(input, &["network"]).unwrap();
+        assert_eq!(range_text(input, range), "network:");
+    }
+
+    #[test]
+    fn block_sequence_highlights_key_colon() {
+        let input = "items:\n  - one\n  - two";
+        let range = hover_range_for(input, &["items"]).unwrap();
+        assert_eq!(range_text(input, range), "items:");
+    }
+
+    #[test]
+    fn nested_block_highlights_key_colon() {
+        let input = "a:\n  b:\n    c: 42";
+        let range = hover_range_for(input, &["a", "b"]).unwrap();
+        assert_eq!(range_text(input, range), "b:");
+    }
+
+    #[test]
+    fn block_value_skips_indentation() {
+        let input = "outer:\n  inner:\n    x: 1";
+        let range = hover_range_for(input, &["outer", "inner"]).unwrap();
+        assert_eq!(range_text(input, range), "inner:");
+    }
+
+    // ── compute_hover_range: sequence elements ────────────────────
+
+    #[test]
+    fn scalar_seq_element_highlights_with_dash() {
+        let input = "items:\n  - foo\n  - bar";
+        let range = hover_range_for(input, &["items", "0"]).unwrap();
+        assert_eq!(range_text(input, range), "- foo");
+    }
+
+    #[test]
+    fn scalar_seq_element_indented() {
+        let input = "ports:\n    - 443\n    - 22";
+        let range = hover_range_for(input, &["ports", "0"]).unwrap();
+        assert_eq!(range_text(input, range), "- 443");
+        let range = hover_range_for(input, &["ports", "1"]).unwrap();
+        assert_eq!(range_text(input, range), "- 22");
+    }
+
+    #[test]
+    fn scalar_seq_element_with_inline_comment() {
+        let input = "- 22 # SSH\n- 443 # HTTPS";
+        let range = hover_range_for(input, &["0"]).unwrap();
+        assert_eq!(range_text(input, range), "- 22");
+        let range = hover_range_for(input, &["1"]).unwrap();
+        assert_eq!(range_text(input, range), "- 443");
+    }
+
+    // ── is_in_comment ───────────────────────────────────────────
+
+    #[test]
+    fn full_comment_line() {
+        let input = "  # this is a comment\nkey: val";
+        // Every position on the comment line should be detected.
+        for col in 0..21 {
+            let offset = col;
+            assert!(
+                is_in_comment(input, offset),
+                "offset {offset} should be in comment"
+            );
+        }
+    }
+
+    #[test]
+    fn not_in_comment_on_key_value() {
+        let input = "key: value";
+        for offset in 0..input.len() {
+            assert!(
+                !is_in_comment(input, offset),
+                "offset {offset} should not be in comment"
+            );
+        }
+    }
+
+    #[test]
+    fn inline_comment_detected() {
+        let input = "key: value # comment";
+        // Offsets on "key: value" (0..10) are not in comment.
+        for offset in 0..10 {
+            assert!(
+                !is_in_comment(input, offset),
+                "offset {offset} should not be in comment"
+            );
+        }
+        // The space before `#` (offset 10) is not in comment.
+        assert!(!is_in_comment(input, 10));
+        // The `#` itself (offset 11) and after are in comment.
+        for offset in 11..input.len() {
+            assert!(
+                is_in_comment(input, offset),
+                "offset {offset} should be in comment"
+            );
+        }
+    }
+
+    #[test]
+    fn hash_in_quoted_string_not_comment() {
+        let input = "key: \"foo#bar\"";
+        // No position should be detected as comment.
+        for offset in 0..input.len() {
+            assert!(
+                !is_in_comment(input, offset),
+                "offset {offset} should not be in comment (hash is inside quotes)"
+            );
+        }
+    }
+
+    #[test]
+    fn schema_directive_line_is_comment() {
+        let input = "# language-server: $schema=https://example.com\nkey: val";
+        assert!(is_in_comment(input, 0));
+        assert!(is_in_comment(input, 10));
+        // After the newline, on "key: val" line.
+        let key_offset = input.find("key").unwrap();
+        assert!(!is_in_comment(input, key_offset));
+    }
+
+    // ── position_to_offset / offset_to_position roundtrip ───────
+
+    #[test]
+    fn position_offset_roundtrip() {
+        let input = "line0\nline1\nline2";
+        for offset in 0..input.len() {
+            let pos = offset_to_position(input, offset);
+            let back = position_to_offset(input, pos);
+            assert_eq!(
+                back, offset,
+                "roundtrip failed for offset {offset} -> pos ({}, {}) -> {back}",
+                pos.line, pos.character
+            );
+        }
+    }
 }

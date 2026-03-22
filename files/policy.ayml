@@ -21,3 +21,4 @@ network:
       action: deny
       ports: all
       precedence: -1
+    - {host: '', action: allow, ports: all}
