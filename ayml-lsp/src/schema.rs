@@ -98,11 +98,11 @@ fn pointer_lookup<'a>(root: &'a Json, pointer: &str) -> Option<&'a Json> {
 }
 
 /// Build a markdown hover string from a JSON sub-schema.
-pub fn hover_content(schema: &Json) -> Option<String> {
-    // If the schema itself has no description but is an anyOf/oneOf with a
-    // non-null variant, pull info from that variant too.
-    let effective = effective_schema(schema);
-    hover_content_inner(schema, effective)
+/// `root` is the full schema document, needed to resolve `$ref` pointers.
+pub fn hover_content(root: &Json, schema: &Json) -> Option<String> {
+    let schema = resolve_refs(root, schema);
+    let effective = effective_schema(schema).map(|e| resolve_refs(root, e));
+    hover_content_inner(root, schema, effective)
 }
 
 /// For composition schemas, return the most informative sub-schema:
@@ -128,7 +128,7 @@ fn effective_schema(schema: &Json) -> Option<&Json> {
     None
 }
 
-fn hover_content_inner(schema: &Json, effective: Option<&Json>) -> Option<String> {
+fn hover_content_inner(root: &Json, schema: &Json, effective: Option<&Json>) -> Option<String> {
     let mut parts = Vec::new();
 
     // Try description from the schema itself, then from the effective variant.
@@ -144,7 +144,7 @@ fn hover_content_inner(schema: &Json, effective: Option<&Json>) -> Option<String
         parts.push(desc.to_string());
     }
 
-    let ty = schema_type_string(schema).or_else(|| effective.and_then(schema_type_string));
+    let ty = schema_type_string(root, schema).or_else(|| effective.and_then(|e| schema_type_string(root, e)));
     if let Some(ty) = ty {
         parts.push(format!("**Type:** `{ty}`"));
     }
@@ -197,7 +197,7 @@ fn hover_content_inner(schema: &Json, effective: Option<&Json>) -> Option<String
 }
 
 /// Extract a human-readable type string from a schema node.
-fn schema_type_string(schema: &Json) -> Option<String> {
+fn schema_type_string(root: &Json, schema: &Json) -> Option<String> {
     // Explicit "type" field
     if let Some(ty) = schema.get("type") {
         if let Some(s) = ty.as_str() {
@@ -209,21 +209,24 @@ fn schema_type_string(schema: &Json) -> Option<String> {
         }
     }
 
-    // oneOf / anyOf
+    // allOf: try each sub-schema
+    if let Some(all) = schema.get("allOf").and_then(|v| v.as_array()) {
+        for sub in all {
+            let resolved = resolve_refs(root, sub);
+            if let Some(ty) = schema_type_string(root, resolved) {
+                return Some(ty);
+            }
+        }
+    }
+
+    // oneOf / anyOf: describe each variant
     for keyword in &["oneOf", "anyOf"] {
         if let Some(variants) = schema.get(*keyword).and_then(|v| v.as_array()) {
             let types: Vec<String> = variants
                 .iter()
                 .filter_map(|v| {
-                    v.get("type")
-                        .and_then(|t| t.as_str())
-                        .map(String::from)
-                        .or_else(|| {
-                            v.get("$ref").and_then(|r| r.as_str()).map(|r| {
-                                // Show just the definition name from "#/definitions/Foo"
-                                r.rsplit('/').next().unwrap_or(r).to_string()
-                            })
-                        })
+                    let resolved = resolve_refs(root, v);
+                    variant_type_label(root, resolved)
                 })
                 .collect();
             if !types.is_empty() {
@@ -233,4 +236,36 @@ fn schema_type_string(schema: &Json) -> Option<String> {
     }
 
     None
+}
+
+/// Produce a short type label for a single schema variant.
+fn variant_type_label(root: &Json, schema: &Json) -> Option<String> {
+    // Simple type
+    if let Some(ty) = schema.get("type").and_then(|t| t.as_str()) {
+        // Annotate with enum values or items type if available
+        if ty == "string" {
+            if let Some(vals) = schema.get("enum").and_then(|e| e.as_array()) {
+                let joined: Vec<String> = vals.iter().filter_map(|v| v.as_str().map(|s| format!("\"{s}\""))).collect();
+                return Some(joined.join(" | "));
+            }
+        }
+        if ty == "array" {
+            if let Some(items) = schema.get("items") {
+                let items_resolved = resolve_refs(root, items);
+                if let Some(item_ty) = items_resolved.get("type").and_then(|t| t.as_str()) {
+                    return Some(format!("{item_ty}[]"));
+                }
+            }
+            return Some("array".to_string());
+        }
+        return Some(ty.to_string());
+    }
+
+    // $ref without resolution — show the definition name
+    if let Some(ref_str) = schema.get("$ref").and_then(|r| r.as_str()) {
+        return Some(ref_str.rsplit('/').next().unwrap_or(ref_str).to_string());
+    }
+
+    // Nested composition — recurse
+    schema_type_string(root, schema)
 }

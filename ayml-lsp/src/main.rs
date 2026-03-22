@@ -300,7 +300,7 @@ fn handle_hover(
 
     // Walk the schema to the sub-schema at that path.
     let sub_schema = schema::resolve_sub_schema(&schema_value, &path_refs)?;
-    let content = schema::hover_content(sub_schema)?;
+    let content = schema::hover_content(&schema_value, sub_schema)?;
 
     let hover_range = compute_hover_range(&node, &path_segments, text);
 
@@ -366,26 +366,11 @@ fn compute_hover_range(
 
     let last_segment = path.last()?;
 
-    // If parent is a sequence, highlight `- value` for scalars.
+    // If parent is a sequence, highlight just the value span.
     let ayml_core::Value::Map(map) = &current.value else {
         if let ayml_core::Value::Seq(items) = &current.value {
             let idx: usize = last_segment.parse().ok()?;
             let item = items.get(idx)?;
-            if item.value.is_scalar() {
-                // Find `- ` before the value on the same line.
-                let line_start = text[..item.span.start]
-                    .rfind('\n')
-                    .map(|i| i + 1)
-                    .unwrap_or(0);
-                let dash_start = line_start
-                    + text[line_start..]
-                        .bytes()
-                        .take_while(|&b| b == b' ' || b == b'\t')
-                        .count();
-                let start = offset_to_position(text, dash_start);
-                let end = offset_to_position(text, item.span.end);
-                return Some(Range::new(start, end));
-            }
             return Some(span_to_range(text, item.span));
         }
         return None;
@@ -402,44 +387,33 @@ fn compute_hover_range(
         ayml_core::Value::Seq(s) if !s.is_empty()
     );
 
-    // For block values the value span is on a different line than the key.
-    // For scalar values the key and value are on the same line.
-    // In both cases, find the key's line by searching backwards from the
-    // value span for the `key:` text.
-    let key_line_start = if is_block {
-        // Key is on the line *before* the value span. Find the line
-        // containing the `:` that introduced this value.
-        let before_value = &text[..value_node.span.start];
-        // Find the last `:\n` or `: ` before the value — that's on the key line.
-        let colon = before_value.rfind(':')?;
-        text[..colon].rfind('\n').map(|i| i + 1).unwrap_or(0)
-    } else {
-        text[..value_node.span.start]
-            .rfind('\n')
-            .map(|i| i + 1)
-            .unwrap_or(0)
-    };
-
-    // Skip indentation.
-    let key_start = key_line_start
-        + text[key_line_start..]
-            .bytes()
-            .take_while(|&b| b == b' ' || b == b'\t')
-            .count();
-    // Skip `- ` prefix for sequence entries (compact mappings).
-    let key_start = if text[key_start..].starts_with("- ") {
-        key_start + 2
-    } else {
-        key_start
-    };
+    // Find where `key:` appears before the value span.
+    // Search backwards from the value for the colon, then backwards from
+    // the colon for the key text start.
+    let before_value = &text[..value_node.span.start];
+    let colon = before_value.rfind(':')?;
+    // The key text is just before the colon (possibly with spaces between
+    // key and colon, though AYML doesn't allow that in block context).
+    // Search backwards from colon past any whitespace to find the key end,
+    // then find the key start.
+    let key_end = text[..colon]
+        .bytes()
+        .rposition(|b| b != b' ' && b != b'\t')
+        .map(|i| i + 1)
+        .unwrap_or(colon);
+    // Key start: scan backwards from key_end past non-delimiter chars.
+    // Stop at whitespace, `{`, `,`, `-`, or start of string.
+    let key_start = text[..key_end]
+        .bytes()
+        .rposition(|b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r'
+            || b == b'{' || b == b',' || b == b'-')
+        .map(|i| i + 1)
+        .unwrap_or(0);
 
     if is_block {
         // Highlight `key:` (including the colon).
-        let colon_end = text[key_start..]
-            .find(':')
-            .map(|i| key_start + i + 1)?;
         let start = offset_to_position(text, key_start);
-        let end = offset_to_position(text, colon_end);
+        let end = offset_to_position(text, colon + 1);
         Some(Range::new(start, end))
     } else {
         // Scalar or empty collection: highlight the whole `key: value` pair.
@@ -595,28 +569,44 @@ mod tests {
     // ── compute_hover_range: sequence elements ────────────────────
 
     #[test]
-    fn scalar_seq_element_highlights_with_dash() {
+    fn scalar_seq_element_value_only() {
         let input = "items:\n  - foo\n  - bar";
         let range = hover_range_for(input, &["items", "0"]).unwrap();
-        assert_eq!(range_text(input, range), "- foo");
+        assert_eq!(range_text(input, range), "foo");
     }
 
     #[test]
     fn scalar_seq_element_indented() {
         let input = "ports:\n    - 443\n    - 22";
         let range = hover_range_for(input, &["ports", "0"]).unwrap();
-        assert_eq!(range_text(input, range), "- 443");
+        assert_eq!(range_text(input, range), "443");
         let range = hover_range_for(input, &["ports", "1"]).unwrap();
-        assert_eq!(range_text(input, range), "- 22");
+        assert_eq!(range_text(input, range), "22");
     }
 
     #[test]
     fn scalar_seq_element_with_inline_comment() {
         let input = "- 22 # SSH\n- 443 # HTTPS";
         let range = hover_range_for(input, &["0"]).unwrap();
-        assert_eq!(range_text(input, range), "- 22");
+        assert_eq!(range_text(input, range), "22");
         let range = hover_range_for(input, &["1"]).unwrap();
-        assert_eq!(range_text(input, range), "- 443");
+        assert_eq!(range_text(input, range), "443");
+    }
+
+    // ── compute_hover_range: flow mapping elements ──────────────
+
+    #[test]
+    fn flow_mapping_scalar_value() {
+        let input = "- {host: example.com, action: allow}";
+        let range = hover_range_for(input, &["0", "action"]).unwrap();
+        assert_eq!(range_text(input, range), "action: allow");
+    }
+
+    #[test]
+    fn flow_mapping_first_entry() {
+        let input = "- {host: example.com, action: allow}";
+        let range = hover_range_for(input, &["0", "host"]).unwrap();
+        assert_eq!(range_text(input, range), "host: example.com");
     }
 
     // ── is_in_comment ───────────────────────────────────────────
