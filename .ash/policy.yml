@@ -24,6 +24,20 @@ files:
   - path: /opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/__pycache__/heapq.cpython-314.pyc.4393384960
     operations:
     - create
+  - path: ~/.cache/tree-sitter/**
+    operations:
+    - read
+    - write
+    - create
+    - delete
+  - path: ~/.npm/_cacache/**
+    operations:
+    - create
+    - rename
+  - path: ~/.npm/_logs/**
+  - path: ~/.npm/_update-notifier-last-checked
+    operations:
+    - write
   - path: ~/.zprofile
     action: deny
     operations:
@@ -47,10 +61,11 @@ exec:
   - path: ./ayml/fuzz/target/**
   - path: ./target/**
   - path: /opt/homebrew/Cellar/llvm@20/**
+  - path: /opt/homebrew/Cellar/node/25.8.1_1/bin/node
   - path: /opt/homebrew/Cellar/python@3.14/**
   - path: /opt/homebrew/Cellar/tree/*/bin/tree
   - path: ~/.cargo/bin/cargo-fuzz
   - path: ~/.cargo/bin/samply
-    subcommand: record
+  - path: ~/Projects/ayml/tree-sitter-ayml/node_modules/tree-sitter-cli/tree-sitter
 io_devices:
   rules: []

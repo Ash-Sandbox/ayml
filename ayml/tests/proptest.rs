@@ -247,4 +247,24 @@ proptest! {
             display,
         );
     }
+
+    /// Triple-quoted strings inside flow collections parse correctly via serde.
+    #[test]
+    fn triple_quoted_in_flow_collections_serde(
+        text in "[a-zA-Z0-9 ]{1,20}",
+        kind in 0..3u8,
+    ) {
+        let input = match kind {
+            0 => format!("[1, \"\"\"\n  {text}\n  \"\"\"]\n"),
+            1 => format!("{{a: \"\"\"\n  {text}\n  \"\"\"}}\n"),
+            _ => format!("{{a: \"\"\"\n  {text}\n  \"\"\", b: 1}}\n"),
+        };
+        let parsed: Result<serde_json::Value, _> = from_str(&input);
+        prop_assert!(
+            parsed.is_ok(),
+            "serde parse failed: {}\n--- input ---\n{}---",
+            parsed.unwrap_err(),
+            input,
+        );
+    }
 }

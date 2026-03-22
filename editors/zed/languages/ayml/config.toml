@@ -1,5 +1,5 @@
 name = "AYML"
-grammar = "yaml"
+grammar = "ayml"
 path_suffixes = ["ayml"]
 line_comments = ["# "]
 tab_size = 2

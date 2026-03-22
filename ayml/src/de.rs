@@ -595,6 +595,9 @@ impl<R: Read> Deserializer<R> {
                     || after == Some(b' ')
                     || after == Some(b'\t')
                     || after == Some(b'#')
+                    || after == Some(b',')
+                    || after == Some(b']')
+                    || after == Some(b'}')
                 {
                     closing_indent = spaces;
                     // Consume spaces + `"""`

@@ -19,6 +19,9 @@ network:
         # Deny all other traffic
     - host: 0.0.0.0/0
       action: deny
-      ports: all
+      ports: "hello"
       precedence: -1
-    - {host: '', action: allow, ports: all}
+    - {host: "hello there!", action: allow,     ports: """
+        what is going on here?
+        this thing
+        """}

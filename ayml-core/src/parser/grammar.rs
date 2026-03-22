@@ -439,6 +439,9 @@ impl<'a> Parser<'a> {
                     || after_close.starts_with(' ')
                     || after_close.starts_with('\t')
                     || after_close.starts_with('#')
+                    || after_close.starts_with(',')
+                    || after_close.starts_with(']')
+                    || after_close.starts_with('}')
                 {
                     closing_indent = spaces;
                     self.scanner.offset += spaces + 3;

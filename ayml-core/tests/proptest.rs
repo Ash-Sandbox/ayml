@@ -382,4 +382,24 @@ proptest! {
             emitted,
         );
     }
+
+    /// Triple-quoted strings inside flow collections parse correctly.
+    #[test]
+    fn triple_quoted_in_flow_collections(
+        text in "[a-zA-Z0-9 ]{1,20}",
+        kind in 0..3u8,
+    ) {
+        let input = match kind {
+            0 => format!("[1, \"\"\"\n  {text}\n  \"\"\"]\n"),
+            1 => format!("{{a: \"\"\"\n  {text}\n  \"\"\"}}\n"),
+            _ => format!("{{a: \"\"\"\n  {text}\n  \"\"\", b: 1}}\n"),
+        };
+        let parsed = ayml_core::parse(&input);
+        prop_assert!(
+            parsed.is_ok(),
+            "parse failed: {}\n--- input ---\n{}---",
+            parsed.unwrap_err(),
+            input,
+        );
+    }
 }
