@@ -302,12 +302,21 @@ fn handle_hover(
     let sub_schema = schema::resolve_sub_schema(&schema_value, &path_refs)?;
     let content = schema::hover_content(sub_schema)?;
 
+    // Resolve the node at this path to get its span for the hover range.
+    let path_str = if path_segments.is_empty() {
+        String::new()
+    } else {
+        format!("/{}", path_segments.join("/"))
+    };
+    let hover_range = resolve_instance_path(&node, &path_str)
+        .map(|span| span_to_range(text, span));
+
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
             value: content,
         }),
-        range: None,
+        range: hover_range,
     })
 }
 
