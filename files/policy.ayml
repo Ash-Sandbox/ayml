@@ -16,15 +16,10 @@ network:
       ports:
         - 443
         - 22
-        # Deny all other traffic
+    # Deny all other traffic
     - host: 0.0.0.0/0
       action: deny
-      ports: "hello"
+      ports: "all"
       precedence: -1
-    - {host: "hello there!", action: allow, ports: """
-    all "" asdkofjalsdkfj
-     alsdkfjalskdfja
-     asdlkfjalsdkjf
-     asdlfkajsdlfkj
-
-      """}
+    # Flow element
+    - {host: "hello there!", action: allow, ports: all}
