@@ -344,7 +344,20 @@ impl<'a> Parser<'a> {
         match self.scanner.peek() {
             Some('"') => {
                 // Could be double-quoted or triple-quoted
-                if self.scanner.input[self.scanner.offset..].starts_with("\"\"\"") {
+                let rest = &self.scanner.input[self.scanner.offset..];
+                if let Some(after_quotes) = rest.strip_prefix("\"\"\"") {
+                    // Verify the opening `"""` is followed by a line break
+                    // before committing to triple-quoted parsing. This gives
+                    // a clear error message instead of a confusing backtrack.
+                    if let Some(ch) = after_quotes.chars().next()
+                        && ch != '\n'
+                        && ch != '\r'
+                    {
+                        self.scanner.offset += 3;
+                        return Err(self.scanner.error(ErrorKind::Expected(
+                            "line break after `\"\"\"`: content must start on the next line".into(),
+                        )));
+                    }
                     self.parse_triple_quoted()
                 } else {
                     self.parse_double_quoted()
@@ -530,7 +543,13 @@ impl<'a> Parser<'a> {
             } else if line.trim().is_empty() {
                 ""
             } else {
-                line
+                return Err(Error::new(
+                    ErrorKind::Expected(format!(
+                        "at least {closing_indent} spaces of indentation in triple-quoted string"
+                    )),
+                    Span::point(start),
+                    source,
+                ));
             };
 
             let mut chars = stripped.chars().peekable();
@@ -1081,7 +1100,14 @@ impl<'a> Parser<'a> {
                 Ok(Some(node))
             }
             Err(e) if is_hard_error(&e) => Err(e),
-            Err(_) => {
+            Err(e) => {
+                // If the error occurred well past the start, we committed
+                // to this parse path (e.g. parsed several entries before
+                // hitting an error in a value). Propagate instead of
+                // silently backtracking.
+                if e.span.start > start + indent {
+                    return Err(e);
+                }
                 self.scanner.offset = saved;
                 Ok(None)
             }

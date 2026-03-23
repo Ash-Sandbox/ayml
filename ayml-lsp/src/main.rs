@@ -185,27 +185,133 @@ fn validate_with_schema(
 
     let json_value = convert::node_to_json(node);
 
-    validator
-        .iter_errors(&json_value)
-        .map(|error| {
-            let path = error.instance_path().to_string();
-            let range = resolve_instance_path(node, &path)
-                .map(|span| span_to_range(text, span))
-                .unwrap_or(Range::new(Position::new(0, 0), Position::new(0, 0)));
-            let message = if path.is_empty() {
-                format!("{error}")
-            } else {
-                format!("{path}: {error}")
-            };
-            Diagnostic {
-                range,
-                severity: Some(DiagnosticSeverity::ERROR),
-                source: Some("ayml-schema".to_string()),
-                message,
-                ..Default::default()
+    let mut diagnostics = Vec::new();
+    for error in validator.iter_errors(&json_value) {
+        collect_leaf_errors(&error, node, text, &schema_value, &mut diagnostics);
+    }
+    diagnostics
+}
+
+/// Recursively collect the most specific (leaf) validation errors.
+/// Composition errors (anyOf, oneOf) are expanded into their sub-errors
+/// so diagnostics point to the actual invalid values rather than the
+/// outer composition keyword.
+fn collect_leaf_errors(
+    error: &jsonschema::ValidationError<'_>,
+    node: &ayml_core::Node,
+    text: &str,
+    schema_root: &serde_json::Value,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    use jsonschema::error::ValidationErrorKind;
+
+    match error.kind() {
+        ValidationErrorKind::AnyOf { context } | ValidationErrorKind::OneOfNotValid { context } => {
+            // Check if all variants failed at the same instance path (i.e.
+            // the error is about the value itself, not a nested property).
+            // In that case, produce a combined message describing valid options.
+            let error_path = error.instance_path().to_string();
+            let all_same_path = context.iter().all(|variant_errors| {
+                variant_errors
+                    .iter()
+                    .all(|e| e.instance_path().to_string() == error_path)
+            });
+
+            if all_same_path {
+                // All variants failed at this same path — describe what's expected.
+                let path = &error_path;
+                let range = resolve_instance_path(node, path)
+                    .map(|span| span_to_range(text, span))
+                    .unwrap_or(Range::new(Position::new(0, 0), Position::new(0, 0)));
+
+                // Try to build a helpful message from the schema.
+                let path_segments: Vec<&str> = if path.is_empty() {
+                    vec![]
+                } else {
+                    path.strip_prefix('/').unwrap_or(path).split('/').collect()
+                };
+                let message =
+                    if let Some(sub) = schema::resolve_sub_schema(schema_root, &path_segments) {
+                        let ty = schema::hover_content(schema_root, sub)
+                            .and_then(|content| {
+                                // Extract just the type line.
+                                content
+                                    .lines()
+                                    .find(|l| l.starts_with("**Type:**"))
+                                    .map(|l| {
+                                        l.trim_start_matches("**Type:** `")
+                                            .trim_end_matches('`')
+                                            .to_string()
+                                    })
+                            })
+                            .unwrap_or_else(|| "a valid value".to_string());
+                        if path.is_empty() {
+                            format!("expected {ty}")
+                        } else {
+                            format!("{path}: expected {ty}")
+                        }
+                    } else if path.is_empty() {
+                        format!("{error}")
+                    } else {
+                        format!("{path}: {error}")
+                    };
+
+                diagnostics.push(Diagnostic {
+                    range,
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    source: Some("ayml-schema".to_string()),
+                    message,
+                    ..Default::default()
+                });
+                return;
             }
-        })
-        .collect()
+
+            // Variants failed at different paths — recurse into the deepest.
+            let deepest = context
+                .iter()
+                .map(|variant_errors| {
+                    variant_errors
+                        .iter()
+                        .map(|e: &jsonschema::ValidationError<'_>| e.instance_path().iter().count())
+                        .max()
+                        .unwrap_or(0)
+                })
+                .max()
+                .unwrap_or(0);
+            for variant_errors in context {
+                let variant_depth = variant_errors
+                    .iter()
+                    .map(|e: &jsonschema::ValidationError<'_>| e.instance_path().iter().count())
+                    .max()
+                    .unwrap_or(0);
+                if variant_depth >= deepest {
+                    for sub_error in variant_errors {
+                        collect_leaf_errors(sub_error, node, text, schema_root, diagnostics);
+                    }
+                    return;
+                }
+            }
+        }
+        _ => {}
+    }
+
+    // Leaf error — emit a diagnostic.
+    let path = error.instance_path().to_string();
+    let range = resolve_instance_path(node, &path)
+        .map(|span| span_to_range(text, span))
+        .unwrap_or(Range::new(Position::new(0, 0), Position::new(0, 0)));
+    let message = if path.is_empty() {
+        format!("{error}")
+    } else {
+        format!("{path}: {error}")
+    };
+    diagnostics.push(Diagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::ERROR),
+        source: Some("ayml-schema".to_string()),
+        message,
+        ..Default::default()
+    });
 }
 
 /// Walk a JSON pointer path (e.g. "/servers/0/port") through the Node tree

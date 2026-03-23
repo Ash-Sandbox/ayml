@@ -114,7 +114,7 @@ impl fmt::Display for Error {
             ErrorKind::DuplicateKey(k) => write!(f, "duplicate mapping key: '{k}'"),
             ErrorKind::NullKey => write!(f, "null cannot be used as a mapping key"),
             ErrorKind::FloatKey => write!(f, "float cannot be used as a mapping key"),
-            ErrorKind::Expected(what) => write!(f, "expected '{what}'"),
+            ErrorKind::Expected(what) => write!(f, "expected {what}"),
             ErrorKind::ByteOrderMark => write!(f, "byte order mark is not allowed"),
             ErrorKind::NonPrintable(c) => {
                 write!(f, "non-printable character U+{:04X}", *c as u32)

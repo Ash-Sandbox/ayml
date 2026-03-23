@@ -21,7 +21,10 @@ network:
       action: deny
       ports: "hello"
       precedence: -1
-    - {host: "hello there!", action: allow,     ports: """
-        what is going on here?
-        this thing
-        """}
+    - {host: "hello there!", action: allow, ports: """
+    all "" asdkofjalsdkfj
+     alsdkfjalskdfja
+     asdlkfjalsdkjf
+     asdlfkajsdlfkj
+
+      """}

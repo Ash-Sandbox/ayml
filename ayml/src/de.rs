@@ -635,7 +635,9 @@ impl<R: Read> Deserializer<R> {
             } else if line.trim().is_empty() {
                 ""
             } else {
-                line.as_str()
+                return Err(self.error(&format!(
+                    "insufficient indentation in triple-quoted string (expected at least {closing_indent} spaces)"
+                )));
             };
 
             let mut chars = stripped.chars().peekable();
