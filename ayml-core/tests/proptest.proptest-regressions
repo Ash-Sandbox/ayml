@@ -1,0 +1,13 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ba493a368815f9f5069e86f97fd4ea58774a3b0d7218ef177d02c6a1071c7aa9 # shrinks to node = Node { comment: None, inline_comment: None, value: Seq([]) }
+cc 09852a244f548633bd2050266d1a636445eee2a0f95aa168138652664f176994 # shrinks to node = Node { comment: None, inline_comment: None, value: Str("A ") }
+cc 0da9e6e54141bd53553c53bca0606898f64f9317cb269bc36d515c5789b35528 # shrinks to node = Node { comment: None, inline_comment: None, value: Seq([Node { comment: None, inline_comment: None, value: Seq([Node { comment: None, inline_comment: None, value: Float(0.0) }]) }]) }
+cc 4294057dd1c83caaf89547f2eb0ef280e62587bc9299e9eba78b52b00abab577 # shrinks to node = Node { comment: None, inline_comment: None, value: Seq([Node { comment: None, inline_comment: None, value: Map({}) }]) }
+cc d537618e3c94b63d48f6178f79f1cb8663d30a13499f26810feba57e74599ce1 # shrinks to node = Node { comment: None, inline_comment: None, value: Str("]") }
+cc 5443c70d434813876787cfedbdaed6367232699e44290753736c6953dc318c4b # shrinks to node = Node { comment: None, inline_comment: None, value: Str("A:") }
+cc 1ab64613c3f8c4f111748bbced7e00ff2062b34a7f503352536af0b86de68e04 # shrinks to node = Node { comment: None, inline_comment: None, value: Str("a#") }
