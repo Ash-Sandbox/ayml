@@ -8,7 +8,6 @@
 (null_literal) @constant.builtin
 (boolean_literal) @constant.builtin
 (integer_literal) @number
-(float_literal) @number
 
 ; Strings
 (double_quoted_string) @string

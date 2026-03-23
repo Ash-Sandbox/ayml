@@ -66,7 +66,6 @@ module.exports = grammar({
       choice(
         $.null_literal,
         $.boolean_literal,
-        $.float_literal,
         $.integer_literal,
         $.triple_quoted_string,
         $.double_quoted_string,
@@ -76,18 +75,6 @@ module.exports = grammar({
     null_literal: (_) => prec(1, "null"),
 
     boolean_literal: (_) => prec(1, choice("true", "false")),
-
-    float_literal: (_) =>
-      token(
-        prec(1, choice(
-          /[+-]?[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?/,
-          /[+-]?[0-9]+[eE][+-]?[0-9]+/,
-          "inf",
-          "+inf",
-          "-inf",
-          "nan",
-        )),
-      ),
 
     integer_literal: (_) =>
       token(
@@ -118,7 +105,10 @@ module.exports = grammar({
       ))),
 
     // Bare string: anything that doesn't match a more specific token.
-    bare_string: (_) => token(prec(-1, /[^\s\[\]{},#"\\][^\n\r#]*/)),
+    // Same precedence as integer so longest-match wins (e.g. 0.0.0.0/0
+    // matches bare_string, not integer + bare_string).
+    // Excludes `-` as first char so sequence indicators aren't consumed.
+    bare_string: (_) => token(prec(1, /[^\s\[\]{},#"\\-][^\n\r#]*/)),
 
     // ── Flow Collections ──────────────────────────────────────
 
@@ -148,7 +138,6 @@ module.exports = grammar({
       choice(
         $.null_literal,
         $.boolean_literal,
-        $.float_literal,
         $.integer_literal,
         $.triple_quoted_string,
         $.double_quoted_string,

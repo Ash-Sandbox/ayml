@@ -30,10 +30,6 @@
           "named": true
         },
         {
-          "type": "float_literal",
-          "named": true
-        },
-        {
           "type": "flow_mapping",
           "named": true
         },
@@ -96,10 +92,6 @@
             "named": true
           },
           {
-            "type": "float_literal",
-            "named": true
-          },
-          {
             "type": "flow_bare_string",
             "named": true
           },
@@ -154,10 +146,6 @@
           "named": true
         },
         {
-          "type": "float_literal",
-          "named": true
-        },
-        {
           "type": "flow_bare_string",
           "named": true
         },
@@ -202,10 +190,6 @@
           },
           {
             "type": "double_quoted_string",
-            "named": true
-          },
-          {
-            "type": "float_literal",
             "named": true
           },
           {
@@ -268,10 +252,6 @@
           "named": true
         },
         {
-          "type": "float_literal",
-          "named": true
-        },
-        {
           "type": "flow_mapping",
           "named": true
         },
@@ -329,10 +309,6 @@
   {
     "type": "false",
     "named": false
-  },
-  {
-    "type": "float_literal",
-    "named": true
   },
   {
     "type": "flow_bare_string",
