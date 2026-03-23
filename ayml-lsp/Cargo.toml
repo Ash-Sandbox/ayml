@@ -3,6 +3,9 @@ name = "ayml-lsp"
 version = "0.1.0"
 edition = "2024"
 
+[lints]
+workspace = true
+
 [dependencies]
 ayml-core = { path = "../ayml-core" }
 jsonschema = { version = "0.45", default-features = false, features = ["resolve-file"] }

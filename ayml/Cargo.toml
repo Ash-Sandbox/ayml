@@ -13,6 +13,9 @@ categories = ["config", "parsing"]
 [features]
 schemars = ["dep:schemars"]
 
+[lints]
+workspace = true
+
 [dependencies]
 indexmap = { version = "2.13.0", features = ["serde"] }
 itoa = "1"
