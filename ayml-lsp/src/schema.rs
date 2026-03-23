@@ -97,6 +97,13 @@ fn pointer_lookup<'a>(root: &'a Json, pointer: &str) -> Option<&'a Json> {
     Some(current)
 }
 
+/// Return a human-readable type string for the schema (e.g. `"all" | integer[]`).
+pub fn type_string(root: &Json, schema: &Json) -> Option<String> {
+    let schema = resolve_refs(root, schema);
+    let effective = effective_schema(schema).map(|e| resolve_refs(root, e));
+    schema_type_string(root, schema).or_else(|| effective.and_then(|e| schema_type_string(root, e)))
+}
+
 /// Build a markdown hover string from a JSON sub-schema.
 /// `root` is the full schema document, needed to resolve `$ref` pointers.
 pub fn hover_content(root: &Json, schema: &Json) -> Option<String> {

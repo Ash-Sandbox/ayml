@@ -1,4 +1,4 @@
-use ayml_core::{MapKey, Node, Value};
+use ayml_core::{Node, Value};
 
 /// Given a byte offset in the source, walk the Node tree to find the
 /// deepest node containing that offset. Returns the JSON pointer path
@@ -18,7 +18,7 @@ fn walk(node: &Node, offset: usize, path: &mut Vec<String>) {
             for (key, value_node) in map {
                 // Check if cursor is within the value node's span.
                 if value_node.span.start <= offset && offset < value_node.span.end {
-                    path.push(map_key_to_string(key));
+                    path.push(key.to_string());
                     walk(value_node, offset, path);
                     return;
                 }
@@ -32,7 +32,7 @@ fn walk(node: &Node, offset: usize, path: &mut Vec<String>) {
                 // If cursor is before this value but after the map start,
                 // it's likely on the key text for this entry.
                 if offset < value_node.span.start && offset >= node.span.start {
-                    path.push(map_key_to_string(key));
+                    path.push(key.to_string());
                     return;
                 }
             }
@@ -47,13 +47,5 @@ fn walk(node: &Node, offset: usize, path: &mut Vec<String>) {
             }
         }
         _ => {}
-    }
-}
-
-fn map_key_to_string(key: &MapKey) -> String {
-    match key {
-        MapKey::Bool(b) => b.to_string(),
-        MapKey::Int(i) => i.to_string(),
-        MapKey::String(s) => s.clone(),
     }
 }

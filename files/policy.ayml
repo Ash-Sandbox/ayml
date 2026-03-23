@@ -8,10 +8,10 @@ files:
     operations:
     - read
 network:
-  # Network access rules
+  # Network access \asdfjasldfkj lakjsdf &'nbsp; rules
   rules:
     # Allow GitHub
-    - host: *.github.com # primary domain
+    - host: "hello\\\"#world\"" # primary domain
       direction: outbound
       ports:
         - 443

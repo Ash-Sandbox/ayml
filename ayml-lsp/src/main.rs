@@ -232,18 +232,7 @@ fn collect_leaf_errors(
                 };
                 let message =
                     if let Some(sub) = schema::resolve_sub_schema(schema_root, &path_segments) {
-                        let ty = schema::hover_content(schema_root, sub)
-                            .and_then(|content| {
-                                // Extract just the type line.
-                                content
-                                    .lines()
-                                    .find(|l| l.starts_with("**Type:**"))
-                                    .map(|l| {
-                                        l.trim_start_matches("**Type:** `")
-                                            .trim_end_matches('`')
-                                            .to_string()
-                                    })
-                            })
+                        let ty = schema::type_string(schema_root, sub)
                             .unwrap_or_else(|| "a valid value".to_string());
                         if path.is_empty() {
                             format!("expected {ty}")
@@ -550,10 +539,15 @@ fn is_in_comment(text: &str, offset: usize) -> bool {
     let mut i = 0;
     let bytes = line.as_bytes();
     while i < bytes.len() {
-        if bytes[i] == b'"' {
-            in_quote = !in_quote;
-        } else if !in_quote && bytes[i] == b'#' {
-            // Found a comment marker — cursor is in a comment if at or past it.
+        if in_quote {
+            if bytes[i] == b'\\' {
+                i += 1; // skip escaped character
+            } else if bytes[i] == b'"' {
+                in_quote = false;
+            }
+        } else if bytes[i] == b'"' {
+            in_quote = true;
+        } else if bytes[i] == b'#' {
             if offset_in_line >= i {
                 return true;
             }
@@ -568,8 +562,7 @@ fn is_in_comment(text: &str, offset: usize) -> bool {
 }
 
 fn fetch_schema(url: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    if url.starts_with("file://") {
-        let path = url.strip_prefix("file://").unwrap();
+    if let Some(path) = url.strip_prefix("file://") {
         let content = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str(&content)?)
     } else {
@@ -795,6 +788,31 @@ mod tests {
             assert_eq!(
                 back, offset,
                 "roundtrip failed for offset {offset} -> pos ({}, {}) -> {back}",
+                pos.line, pos.character
+            );
+        }
+    }
+
+    #[test]
+    fn escaped_quote_with_hash_not_comment() {
+        // The # is inside a string with escaped quotes — not a comment.
+        let input = "key: \"hello\\\"#world\"";
+        let hash_offset = input.find('#').unwrap();
+        assert!(
+            !is_in_comment(input, hash_offset),
+            "hash inside escaped-quote string should not be a comment"
+        );
+    }
+
+    #[test]
+    fn position_offset_roundtrip_crlf() {
+        let input = "line0\r\nline1\r\nline2";
+        for offset in 0..input.len() {
+            let pos = offset_to_position(input, offset);
+            let back = position_to_offset(input, pos);
+            assert_eq!(
+                back, offset,
+                "CRLF roundtrip failed for offset {offset} -> pos ({}, {}) -> {back}",
                 pos.line, pos.character
             );
         }

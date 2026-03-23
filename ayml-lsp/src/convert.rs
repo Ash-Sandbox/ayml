@@ -1,4 +1,4 @@
-use ayml_core::{MapKey, Node, Value};
+use ayml_core::{Node, Value};
 use serde_json::json;
 
 /// Convert an AYML [`Node`] into a [`serde_json::Value`], discarding comments.
@@ -17,17 +17,9 @@ fn value_to_json(value: &Value) -> serde_json::Value {
         Value::Map(map) => {
             let obj = map
                 .iter()
-                .map(|(k, v)| (map_key_to_string(k), node_to_json(v)))
+                .map(|(k, v)| (k.to_string(), node_to_json(v)))
                 .collect();
             serde_json::Value::Object(obj)
         }
-    }
-}
-
-fn map_key_to_string(key: &MapKey) -> String {
-    match key {
-        MapKey::Bool(b) => b.to_string(),
-        MapKey::Int(i) => i.to_string(),
-        MapKey::String(s) => s.clone(),
     }
 }
