@@ -4,8 +4,6 @@ pub mod scanner;
 use crate::error::Error;
 use crate::value::Node;
 
-pub use grammar::DEFAULT_MAX_DEPTH;
-
 /// Parse an AYML document from a string, returning the root node.
 ///
 /// # Errors

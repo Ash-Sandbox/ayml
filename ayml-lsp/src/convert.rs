@@ -1,4 +1,4 @@
-use ayml_core::{Node, Value};
+use ayml_core::value::{Node, Value};
 use serde_json::json;
 
 /// Convert an AYML [`Node`] into a [`serde_json::Value`], discarding comments.

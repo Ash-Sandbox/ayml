@@ -4,6 +4,10 @@ mod convert;
 mod locate;
 mod schema;
 
+use ayml_core::{
+    error::Span,
+    value::{MapKey, Node, Value},
+};
 use lsp_server::{Connection, Message, Notification, Response};
 use lsp_types::{
     Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
@@ -127,7 +131,7 @@ fn publish_diagnostics(
         Ok(node) => {
             // Check for schema directive in the document comment.
             if let Some(comment) = &node.comment
-                && let Some(schema_url) = ayml_core::schema_uri(comment)
+                && let Some(schema_url) = ayml_core::directive::schema_uri(comment)
             {
                 let schema_diagnostics =
                     validate_with_schema(&node, text, schema_url, schema_cache);
@@ -146,7 +150,7 @@ fn publish_diagnostics(
 }
 
 fn validate_with_schema(
-    node: &ayml_core::Node,
+    node: &Node,
     text: &str,
     schema_url: &str,
     cache: &mut HashMap<String, serde_json::Value>,
@@ -198,7 +202,7 @@ fn validate_with_schema(
 /// outer composition keyword.
 fn collect_leaf_errors(
     error: &jsonschema::ValidationError<'_>,
-    node: &ayml_core::Node,
+    node: &Node,
     text: &str,
     schema_root: &serde_json::Value,
     diagnostics: &mut Vec<Diagnostic>,
@@ -305,7 +309,7 @@ fn collect_leaf_errors(
 
 /// Walk a JSON pointer path (e.g. "/servers/0/port") through the Node tree
 /// and return the span of the target node.
-fn resolve_instance_path(node: &ayml_core::Node, path: &str) -> Option<ayml_core::Span> {
+fn resolve_instance_path(node: &Node, path: &str) -> Option<Span> {
     if path.is_empty() {
         return Some(node.span);
     }
@@ -315,11 +319,11 @@ fn resolve_instance_path(node: &ayml_core::Node, path: &str) -> Option<ayml_core
 
     for segment in &segments {
         match &current.value {
-            ayml_core::Value::Map(map) => {
-                let key = ayml_core::MapKey::String(segment.to_string());
+            Value::Map(map) => {
+                let key = MapKey::String(segment.to_string());
                 current = map.get(&key)?;
             }
-            ayml_core::Value::Seq(items) => {
+            Value::Seq(items) => {
                 let index: usize = segment.parse().ok()?;
                 current = items.get(index)?;
             }
@@ -331,7 +335,7 @@ fn resolve_instance_path(node: &ayml_core::Node, path: &str) -> Option<ayml_core
 }
 
 /// Convert a byte-offset Span to an LSP Range using the source text.
-fn span_to_range(text: &str, span: ayml_core::Span) -> Range {
+fn span_to_range(text: &str, span: Span) -> Range {
     let start = offset_to_position(text, span.start);
     let end = offset_to_position(text, span.end);
     Range::new(start, end)
@@ -370,7 +374,10 @@ fn handle_hover(
     let node = ayml_core::parse(text).ok()?;
 
     // Find the schema URL from the document comment.
-    let schema_url = node.comment.as_deref().and_then(ayml_core::schema_uri)?;
+    let schema_url = node
+        .comment
+        .as_deref()
+        .and_then(ayml_core::directive::schema_uri)?;
 
     let schema_value = match schema_cache.get(schema_url) {
         Some(v) => v.clone(),
@@ -434,7 +441,7 @@ fn position_to_offset(text: &str, pos: Position) -> usize {
 /// - Scalar values: highlight the whole `key: value` pair.
 /// - Block values (maps, non-empty seqs): highlight just `key:`.
 /// - Non-mapping paths (e.g. sequence indices): highlight the value span.
-fn compute_hover_range(root: &ayml_core::Node, path: &[String], text: &str) -> Option<Range> {
+fn compute_hover_range(root: &Node, path: &[String], text: &str) -> Option<Range> {
     if path.is_empty() {
         return Some(span_to_range(text, root.span));
     }
@@ -443,11 +450,11 @@ fn compute_hover_range(root: &ayml_core::Node, path: &[String], text: &str) -> O
     let mut current = root;
     for segment in &path[..path.len() - 1] {
         match &current.value {
-            ayml_core::Value::Map(map) => {
-                let key = ayml_core::MapKey::String(segment.clone());
+            Value::Map(map) => {
+                let key = MapKey::String(segment.clone());
                 current = map.get(&key)?;
             }
-            ayml_core::Value::Seq(items) => {
+            Value::Seq(items) => {
                 let idx: usize = segment.parse().ok()?;
                 current = items.get(idx)?;
             }
@@ -458,8 +465,8 @@ fn compute_hover_range(root: &ayml_core::Node, path: &[String], text: &str) -> O
     let last_segment = path.last()?;
 
     // If parent is a sequence, highlight just the value span.
-    let ayml_core::Value::Map(map) = &current.value else {
-        if let ayml_core::Value::Seq(items) = &current.value {
+    let Value::Map(map) = &current.value else {
+        if let Value::Seq(items) = &current.value {
             let idx: usize = last_segment.parse().ok()?;
             let item = items.get(idx)?;
             return Some(span_to_range(text, item.span));
@@ -467,15 +474,15 @@ fn compute_hover_range(root: &ayml_core::Node, path: &[String], text: &str) -> O
         return None;
     };
 
-    let key = ayml_core::MapKey::String(last_segment.clone());
+    let key = MapKey::String(last_segment.clone());
     let value_node = map.get(&key)?;
 
     let is_block = matches!(
         &value_node.value,
-        ayml_core::Value::Map(m) if !m.is_empty()
+       Value::Map(m) if !m.is_empty()
     ) || matches!(
         &value_node.value,
-        ayml_core::Value::Seq(s) if !s.is_empty()
+       Value::Seq(s) if !s.is_empty()
     );
 
     // Find where `key:` appears before the value span.

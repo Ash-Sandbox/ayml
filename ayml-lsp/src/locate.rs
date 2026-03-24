@@ -1,4 +1,4 @@
-use ayml_core::{Node, Value};
+use ayml_core::value::{Node, Value};
 
 /// Given a byte offset in the source, walk the Node tree to find the
 /// deepest node containing that offset. Returns the JSON pointer path

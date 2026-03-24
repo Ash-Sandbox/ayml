@@ -4,7 +4,7 @@
 //! tree carries optional top and inline comments, and the recursive children
 //! (sequences and mappings) are themselves `CommentedValue`s.
 
-use crate::Commented;
+use crate::commented::Commented;
 use crate::fmt_helpers::{display_float, display_str};
 use indexmap::IndexMap;
 use serde::de::{self, Visitor};

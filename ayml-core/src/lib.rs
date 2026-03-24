@@ -1,18 +1,13 @@
 #![warn(clippy::all, clippy::pedantic)]
 
-mod error;
-mod value;
-
+pub mod directive;
 pub mod emitter;
+pub mod error;
 pub mod parser;
+pub mod value;
 
-mod directive;
-
-pub use directive::schema_uri;
-pub use error::{Error, ErrorKind, Span};
-pub use parser::DEFAULT_MAX_DEPTH;
-pub use parser::scanner::Scanner;
-pub use value::{MapKey, Node, Value};
+use error::Error;
+use value::Node;
 
 /// Parse an AYML document from a string.
 ///

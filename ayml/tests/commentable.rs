@@ -1,4 +1,4 @@
-use ayml::Commented;
+use ayml::commented::Commented;
 use serde::{Deserialize, Serialize};
 
 // ── Deserialization tests ───────────────────────────────────────────

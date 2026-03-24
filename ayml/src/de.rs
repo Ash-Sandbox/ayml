@@ -1921,6 +1921,8 @@ fn valid_exponent(exp: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::value::Value;
+
     use super::*;
 
     #[test]
@@ -2422,7 +2424,7 @@ mod tests {
     #[test]
     fn test_depth_limit_flow_seq() {
         let input = "[".repeat(MAX_DEPTH + 1);
-        let err = from_str::<crate::Value>(&input).unwrap_err();
+        let err = from_str::<Value>(&input).unwrap_err();
         assert!(
             err.to_string().contains("nesting depth limit exceeded"),
             "{err}"
@@ -2432,7 +2434,7 @@ mod tests {
     #[test]
     fn test_depth_limit_flow_map() {
         let input = "{a: ".repeat(MAX_DEPTH + 1) + &"}".repeat(MAX_DEPTH + 1);
-        let err = from_str::<crate::Value>(&input).unwrap_err();
+        let err = from_str::<Value>(&input).unwrap_err();
         assert!(
             err.to_string().contains("nesting depth limit exceeded"),
             "{err}"
@@ -2441,8 +2443,8 @@ mod tests {
 
     #[test]
     fn test_depth_within_limit() {
-        let val: crate::Value = from_str("[[1, 2], [3, 4]]").unwrap();
-        assert!(matches!(val, crate::Value::Seq(_)));
+        let val: Value = from_str("[[1, 2], [3, 4]]").unwrap();
+        assert!(matches!(val, Value::Seq(_)));
     }
 
     #[test]

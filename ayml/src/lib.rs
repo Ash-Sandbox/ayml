@@ -1,18 +1,17 @@
 #![warn(clippy::all, clippy::pedantic)]
 
-mod commented;
-mod commented_value;
+pub mod commented;
+pub mod commented_value;
 pub mod de;
-mod error;
+pub mod error;
 mod fmt_helpers;
 mod read;
 pub mod ser;
-mod value;
+pub mod value;
 
-pub use commented::Commented;
-pub use commented_value::{CommentedValue, CommentedValueKind};
-pub use error::{Error, Result};
-pub use value::Value;
-
-pub use de::{from_reader, from_slice, from_str};
-pub use ser::{to_string, to_vec, to_writer};
+pub use de::from_reader;
+pub use de::from_slice;
+pub use de::from_str;
+pub use ser::to_string;
+pub use ser::to_vec;
+pub use ser::to_writer;
