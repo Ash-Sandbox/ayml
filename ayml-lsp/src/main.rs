@@ -54,22 +54,19 @@ fn main_loop(connection: &Connection) -> Result<(), Box<dyn std::error::Error>> 
                 if connection.handle_shutdown(&req)? {
                     return Ok(());
                 }
-                match req.method.as_str() {
-                    lsp_types::request::HoverRequest::METHOD => {
-                        let (id, params): (_, HoverParams) =
-                            req.extract(lsp_types::request::HoverRequest::METHOD)?;
-                        let hover = handle_hover(&params, &documents, &mut schema_cache);
-                        let resp = Response::new_ok(id, hover);
-                        connection.sender.send(Message::Response(resp))?;
-                    }
-                    _ => {
-                        let resp = Response::new_err(
-                            req.id,
-                            lsp_server::ErrorCode::MethodNotFound as i32,
-                            format!("unhandled method: {}", req.method),
-                        );
-                        connection.sender.send(Message::Response(resp))?;
-                    }
+                if req.method == lsp_types::request::HoverRequest::METHOD {
+                    let (id, params): (_, HoverParams) =
+                        req.extract(lsp_types::request::HoverRequest::METHOD)?;
+                    let hover = handle_hover(&params, &documents, &mut schema_cache);
+                    let resp = Response::new_ok(id, hover);
+                    connection.sender.send(Message::Response(resp))?;
+                } else {
+                    let resp = Response::new_err(
+                        req.id,
+                        lsp_server::ErrorCode::MethodNotFound as i32,
+                        format!("unhandled method: {}", req.method),
+                    );
+                    connection.sender.send(Message::Response(resp))?;
                 }
             }
             Message::Notification(not) => match not.method.as_str() {
@@ -223,9 +220,10 @@ fn collect_leaf_errors(
             if all_same_path {
                 // All variants failed at this same path — describe what's expected.
                 let path = &error_path;
-                let range = resolve_instance_path(node, path)
-                    .map(|span| span_to_range(text, span))
-                    .unwrap_or(Range::new(Position::new(0, 0), Position::new(0, 0)));
+                let range = resolve_instance_path(node, path).map_or(
+                    Range::new(Position::new(0, 0), Position::new(0, 0)),
+                    |span| span_to_range(text, span),
+                );
 
                 // Try to build a helpful message from the schema.
                 let path_segments: Vec<&str> = if path.is_empty() {
@@ -289,9 +287,10 @@ fn collect_leaf_errors(
 
     // Leaf error — emit a diagnostic.
     let path = error.instance_path().to_string();
-    let range = resolve_instance_path(node, &path)
-        .map(|span| span_to_range(text, span))
-        .unwrap_or(Range::new(Position::new(0, 0), Position::new(0, 0)));
+    let range = resolve_instance_path(node, &path).map_or(
+        Range::new(Position::new(0, 0), Position::new(0, 0)),
+        |span| span_to_range(text, span),
+    );
     let message = if path.is_empty() {
         format!("{error}")
     } else {
@@ -378,13 +377,12 @@ fn handle_hover(
         .as_deref()
         .and_then(ayml_core::directive::schema_uri)?;
 
-    let schema_value = match schema_cache.get(schema_url) {
-        Some(v) => v.clone(),
-        None => {
-            let v = fetch_schema(schema_url).ok()?;
-            schema_cache.insert(schema_url.to_string(), v.clone());
-            v
-        }
+    let schema_value = if let Some(url) = schema_cache.get(schema_url) {
+        url.clone()
+    } else {
+        let v = fetch_schema(schema_url).ok()?;
+        schema_cache.insert(schema_url.to_string(), v.clone());
+        v
     };
 
     // Map cursor position to byte offset, then to a path in the node tree.
@@ -397,7 +395,7 @@ fn handle_hover(
     }
 
     let path_segments = locate::path_at_offset(&node, offset);
-    let path_refs: Vec<&str> = path_segments.iter().map(|s| s.as_str()).collect();
+    let path_refs: Vec<&str> = path_segments.iter().map(String::as_str).collect();
 
     // Walk the schema to the sub-schema at that path.
     let sub_schema = schema::resolve_sub_schema(&schema_value, &path_refs)?;
@@ -496,8 +494,7 @@ fn compute_hover_range(root: &Node, path: &[String], text: &str) -> Option<Range
     let key_end = text[..colon]
         .bytes()
         .rposition(|b| b != b' ' && b != b'\t')
-        .map(|i| i + 1)
-        .unwrap_or(colon);
+        .map_or(colon, |i| i + 1);
     // Key start: scan backwards from key_end past non-delimiter chars.
     // Stop at whitespace, `{`, `,`, `-`, or start of string.
     let key_start = text[..key_end]
@@ -511,8 +508,7 @@ fn compute_hover_range(root: &Node, path: &[String], text: &str) -> Option<Range
                 || b == b','
                 || b == b'-'
         })
-        .map(|i| i + 1)
-        .unwrap_or(0);
+        .map_or(0, |i| i + 1);
 
     if is_block {
         // Highlight `key:` (including the colon).
@@ -530,7 +526,7 @@ fn compute_hover_range(root: &Node, path: &[String], text: &str) -> Option<Range
 /// Check if the byte offset falls within a comment — either a full comment
 /// line (first non-space is `#`) or an inline comment (after ` #` on a line).
 fn is_in_comment(text: &str, offset: usize) -> bool {
-    let line_start = text[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let line_start = text[..offset].rfind('\n').map_or(0, |i| i + 1);
     let line = &text[line_start..];
 
     // Full comment line: first non-whitespace is `#`.
