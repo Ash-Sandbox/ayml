@@ -8,6 +8,7 @@ use ayml_core::{
     error::Span,
     value::{MapKey, Node, Value},
 };
+use jsonschema::error::ValidationErrorKind;
 use lsp_server::{Connection, Message, Notification, Response};
 use lsp_types::{
     Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
@@ -207,8 +208,6 @@ fn collect_leaf_errors(
     schema_root: &serde_json::Value,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    use jsonschema::error::ValidationErrorKind;
-
     match error.kind() {
         ValidationErrorKind::AnyOf { context } | ValidationErrorKind::OneOfNotValid { context } => {
             // Check if all variants failed at the same instance path (i.e.
