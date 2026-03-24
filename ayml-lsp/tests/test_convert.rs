@@ -1,6 +1,7 @@
 use ayml_core::value::{Node, Value};
 
 #[path = "../src/convert.rs"]
+#[allow(dead_code)]
 mod convert;
 
 #[test]

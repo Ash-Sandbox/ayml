@@ -344,19 +344,20 @@ fn offset_to_position(text: &str, offset: usize) -> Position {
     let offset = offset.min(text.len());
     let mut line = 0u32;
     let mut col = 0u32;
-    for (i, ch) in text[..offset].char_indices() {
-        if ch == '\n' {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < offset {
+        if bytes[i] == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
             line += 1;
             col = 0;
-        } else if ch == '\r' {
+            i += 2; // skip both \r and \n
+        } else if bytes[i] == b'\n' || bytes[i] == b'\r' {
             line += 1;
             col = 0;
-            // Skip the \n in \r\n
-            if text.as_bytes().get(i + 1) == Some(&b'\n') {
-                continue;
-            }
+            i += 1;
         } else {
             col += 1;
+            i += 1;
         }
     }
     Position::new(line, col)
@@ -416,19 +417,33 @@ fn handle_hover(
 fn position_to_offset(text: &str, pos: Position) -> usize {
     let mut line = 0u32;
     let mut col = 0u32;
-    for (i, ch) in text.char_indices() {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
         if line == pos.line && col == pos.character {
             return i;
         }
-        if ch == '\n' || ch == '\r' {
+        if bytes[i] == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
             if line == pos.line {
-                return i; // cursor is past end of this line
+                return i;
             }
             line += 1;
             col = 0;
+            i += 2;
+        } else if bytes[i] == b'\n' || bytes[i] == b'\r' {
+            if line == pos.line {
+                return i;
+            }
+            line += 1;
+            col = 0;
+            i += 1;
         } else {
             col += 1;
+            i += 1;
         }
+    }
+    if line == pos.line && col == pos.character {
+        return text.len();
     }
     text.len()
 }
@@ -809,7 +824,13 @@ mod tests {
     #[test]
     fn position_offset_roundtrip_crlf() {
         let input = "line0\r\nline1\r\nline2";
+        let bytes = input.as_bytes();
         for offset in 0..input.len() {
+            // Skip the \n byte inside \r\n pairs — it has no distinct
+            // LSP position (the \r already advanced to the next line).
+            if offset > 0 && bytes[offset] == b'\n' && bytes[offset - 1] == b'\r' {
+                continue;
+            }
             let pos = offset_to_position(input, offset);
             let back = position_to_offset(input, pos);
             assert_eq!(
@@ -818,5 +839,27 @@ mod tests {
                 pos.line, pos.character
             );
         }
+    }
+
+    #[test]
+    fn crlf_offset_to_position_absolute() {
+        // "AB\r\nCD"
+        //  0  1  2 3  4 5
+        // Line 0: A(0,0) B(0,1) \r(0,2) \n(still line 0)
+        // Line 1: C(1,0) D(1,1)
+        let input = "AB\r\nCD";
+        assert_eq!(offset_to_position(input, 0), Position::new(0, 0)); // A
+        assert_eq!(offset_to_position(input, 1), Position::new(0, 1)); // B
+        assert_eq!(offset_to_position(input, 4), Position::new(1, 0)); // C
+        assert_eq!(offset_to_position(input, 5), Position::new(1, 1)); // D
+    }
+
+    #[test]
+    fn crlf_position_to_offset_absolute() {
+        let input = "AB\r\nCD";
+        assert_eq!(position_to_offset(input, Position::new(0, 0)), 0); // A
+        assert_eq!(position_to_offset(input, Position::new(0, 1)), 1); // B
+        assert_eq!(position_to_offset(input, Position::new(1, 0)), 4); // C
+        assert_eq!(position_to_offset(input, Position::new(1, 1)), 5); // D
     }
 }

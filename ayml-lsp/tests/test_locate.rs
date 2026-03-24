@@ -1,7 +1,7 @@
 use ayml_core::parse;
 
-// Import from the crate being tested
 #[path = "../src/locate.rs"]
+#[allow(dead_code)]
 mod locate;
 
 fn path_at(input: &str, line: usize, col: usize) -> Vec<String> {

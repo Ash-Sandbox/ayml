@@ -1,4 +1,5 @@
 #[path = "../src/schema.rs"]
+#[allow(dead_code)]
 mod schema;
 
 use serde_json::Value as Json;
