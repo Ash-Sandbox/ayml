@@ -6,8 +6,5 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib"]
 
-[lints]
-workspace = true
-
 [dependencies]
 zed_extension_api = "0.7"
