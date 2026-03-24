@@ -44,10 +44,34 @@ files:
     - read
   - path: ~/Library/Application Support/**
     action: deny
+  - path: ~/Library/Audio
+    operations:
+    - read
+  - path: ~/Library/Audio/Plug-Ins
+    operations:
+    - read
   - path: ~/Library/Python/3.9/lib/python/site-packages
     operations:
     - read
   - path: ~/Projects
+    operations:
+    - read
+  - path: ~/Projects/tree-sitter-ayml
+    operations:
+    - read
+  - path: ~/Projects/tree-sitter-ayml/.git/HEAD
+    operations:
+    - read
+  - path: ~/Projects/tree-sitter-ayml/.git/config
+    operations:
+    - read
+  - path: ~/Projects/tree-sitter-ayml/.git/refs/heads/main
+    operations:
+    - read
+  - path: ~/Projects/tree-sitter-ayml/queries
+    operations:
+    - read
+  - path: ~/Projects/tree-sitter-ayml/queries/highlights.scm
     operations:
     - read
 network:
