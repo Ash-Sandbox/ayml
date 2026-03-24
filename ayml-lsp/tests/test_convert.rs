@@ -1,7 +1,7 @@
+use ayml_core::value::{Node, Value};
+
 #[path = "../src/convert.rs"]
 mod convert;
-
-use ayml_core::{Node, Value};
 
 #[test]
 fn i64_max() {

@@ -1,4 +1,8 @@
-use ayml::{CommentedValue, CommentedValueKind};
+use ayml::{
+    commented::Commented,
+    commented_value::{CommentedValue, CommentedValueKind},
+};
+use indexmap::IndexMap;
 
 #[test]
 fn de_commented_value_scalar_with_inline() {
@@ -150,8 +154,6 @@ fn display_commented_value() {
 #[test]
 fn ser_nested_map_in_map() {
     // Test that a map value that is itself a Commented<Map> serializes with correct indentation
-    use ayml::Commented;
-    use indexmap::IndexMap;
     let mut inner_map = IndexMap::new();
     inner_map.insert(
         "L".to_string(),
@@ -172,8 +174,6 @@ fn ser_nested_map_in_map() {
 
 #[test]
 fn ser_multi_key_nested_map() {
-    use ayml::Commented;
-    use indexmap::IndexMap;
     let mut inner_map = IndexMap::new();
     inner_map.insert(
         "L".to_string(),
@@ -199,9 +199,6 @@ fn ser_multi_key_nested_map() {
 #[test]
 fn ser_proptest_repro() {
     // Exact reproduction of proptest failure
-    use ayml::Commented;
-    use indexmap::IndexMap;
-
     let mut inner_map = IndexMap::new();
     inner_map.insert(
         "L".to_string(),
@@ -248,12 +245,10 @@ fn ser_commented_then_nested_map() {
     // Using a struct to guarantee field order
     #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
     struct Outer {
-        first: ayml::Commented<CommentedValueKind>,
-        second: ayml::Commented<CommentedValueKind>,
-        third: ayml::Commented<CommentedValueKind>,
+        first: Commented<CommentedValueKind>,
+        second: Commented<CommentedValueKind>,
+        third: Commented<CommentedValueKind>,
     }
-    use ayml::Commented;
-    use indexmap::IndexMap;
 
     let mut inner_map = IndexMap::new();
     inner_map.insert(
@@ -286,8 +281,6 @@ fn ser_commented_then_nested_map() {
 
 #[test]
 fn ser_nested_map_with_top_comment() {
-    use ayml::Commented;
-    use indexmap::IndexMap;
     let mut inner_map = IndexMap::new();
     inner_map.insert(
         "L".to_string(),

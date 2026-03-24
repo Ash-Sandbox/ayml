@@ -1,4 +1,9 @@
-use ayml_core::{ErrorKind, MapKey, Node, Value, emit, parse};
+use ayml_core::{
+    emit,
+    error::ErrorKind,
+    parse,
+    value::{MapKey, Node, Value},
+};
 use indexmap::IndexMap;
 
 #[test]

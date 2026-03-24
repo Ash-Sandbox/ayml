@@ -4,9 +4,12 @@
 //! BEFORE the fix is applied. After fixing, the attribute/assertion is
 //! updated to verify the correct behavior.
 
-use ayml::{from_str, to_string};
+use ayml::{
+    commented::Commented, commented_value::CommentedValueKind, from_str, to_string, value::Value,
+};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[test]
 fn triple_quoted_nul_at_end_of_line() {
@@ -165,7 +168,6 @@ fn ser_flow_indicator_in_string_roundtrip() {
 
 #[test]
 fn ser_flow_indicators_in_map_values() {
-    use std::collections::BTreeMap;
     let mut map = BTreeMap::new();
     map.insert("key".to_string(), "a,b".to_string());
     let serialized = to_string(&map).unwrap();
@@ -189,7 +191,6 @@ fn ser_flow_indicator_in_seq_element() {
 
 #[test]
 fn value_display_str_null_ambiguity() {
-    use ayml::Value;
     let v = Value::Str("null".to_string());
     let display = format!("{v}");
     assert_ne!(
@@ -200,7 +201,6 @@ fn value_display_str_null_ambiguity() {
 
 #[test]
 fn value_display_float_int_ambiguity() {
-    use ayml::Value;
     let v = Value::Float(1.0);
     let display = format!("{v}");
     assert!(
@@ -211,7 +211,6 @@ fn value_display_float_int_ambiguity() {
 
 #[test]
 fn commented_value_display_str_null_ambiguity() {
-    use ayml::{Commented, CommentedValueKind};
     let v = Commented {
         top_comment: None,
         value: CommentedValueKind::Str("null".to_string()),
@@ -226,7 +225,6 @@ fn commented_value_display_str_null_ambiguity() {
 
 #[test]
 fn commented_value_display_float_int_ambiguity() {
-    use ayml::{Commented, CommentedValueKind};
     let v = Commented {
         top_comment: None,
         value: CommentedValueKind::Float(1.0),
@@ -243,7 +241,7 @@ fn commented_value_display_float_int_ambiguity() {
 fn de_reject_unquoted_null_key() {
     let input = "null: 5";
     // When target is Value (untyped), null key should be rejected
-    let result: Result<ayml::Value, _> = from_str(input);
+    let result: Result<Value, _> = from_str(input);
     assert!(
         result.is_err(),
         "expected error for unquoted null mapping key"
@@ -253,7 +251,7 @@ fn de_reject_unquoted_null_key() {
 #[test]
 fn de_reject_unquoted_nan_key() {
     let input = "nan: 5";
-    let result: Result<ayml::Value, _> = from_str(input);
+    let result: Result<Value, _> = from_str(input);
     assert!(
         result.is_err(),
         "expected error for unquoted nan mapping key"
@@ -263,7 +261,7 @@ fn de_reject_unquoted_nan_key() {
 #[test]
 fn de_reject_unquoted_inf_key() {
     let input = "inf: 5";
-    let result: Result<ayml::Value, _> = from_str(input);
+    let result: Result<Value, _> = from_str(input);
     assert!(
         result.is_err(),
         "expected error for unquoted inf mapping key"
@@ -273,7 +271,7 @@ fn de_reject_unquoted_inf_key() {
 #[test]
 fn de_reject_unquoted_float_key() {
     let input = "3.14: 5";
-    let result: Result<ayml::Value, _> = from_str(input);
+    let result: Result<Value, _> = from_str(input);
     assert!(
         result.is_err(),
         "expected error for unquoted float mapping key"
@@ -329,7 +327,6 @@ fn ser_only_newline_roundtrip() {
 
 #[test]
 fn value_display_leading_space() {
-    use ayml::Value;
     let v = Value::Str(" hello".to_string());
     let display = format!("{v}");
     assert!(
@@ -340,7 +337,6 @@ fn value_display_leading_space() {
 
 #[test]
 fn value_display_trailing_space() {
-    use ayml::Value;
     let v = Value::Str("hello ".to_string());
     let display = format!("{v}");
     assert!(
@@ -351,7 +347,6 @@ fn value_display_trailing_space() {
 
 #[test]
 fn value_display_dash_space_prefix() {
-    use ayml::Value;
     let v = Value::Str("- item".to_string());
     let display = format!("{v}");
     assert!(
@@ -365,7 +360,6 @@ fn looks_like_number_infinity_not_ayml_float() {
     // "infinity" is accepted by Rust's f64::parse but is NOT an AYML float.
     // The spec only recognizes "inf", "+inf", "-inf", "nan".
     // "infinity" should display as a bare string, not quoted.
-    use ayml::Value;
     let v = Value::Str("infinity".into());
     let display = format!("{v}");
     assert_eq!(
@@ -376,7 +370,6 @@ fn looks_like_number_infinity_not_ayml_float() {
 
 #[test]
 fn looks_like_number_nan_caps_not_ayml_float() {
-    use ayml::Value;
     let v = Value::Str("NaN".into());
     let display = format!("{v}");
     assert_eq!(
@@ -388,7 +381,6 @@ fn looks_like_number_nan_caps_not_ayml_float() {
 #[test]
 fn looks_like_number_dot_prefix_not_ayml_float() {
     // ".5" is accepted by Rust's f64::parse but AYML requires digits before the dot
-    use ayml::Value;
     let v = Value::Str(".5".into());
     let display = format!("{v}");
     assert_eq!(
@@ -400,7 +392,6 @@ fn looks_like_number_dot_prefix_not_ayml_float() {
 #[test]
 fn looks_like_number_trailing_dot_not_ayml_float() {
     // "5." is accepted by Rust's f64::parse but AYML requires digits after the dot
-    use ayml::Value;
     let v = Value::Str("5.".into());
     let display = format!("{v}");
     assert_eq!(
@@ -413,30 +404,30 @@ fn looks_like_number_trailing_dot_not_ayml_float() {
 fn bare_dash_string_roundtrips() {
     // Fuzz crash: input "-#V@" parses as Str("-") because # starts a comment.
     // The serializer must quote "-" since a bare `-` requires a following ns-char.
-    let v: ayml::Value = from_str("-#V@").unwrap();
-    assert_eq!(v, ayml::Value::Str("-".into()));
+    let v: Value = from_str("-#V@").unwrap();
+    assert_eq!(v, Value::Str("-".into()));
     let s = to_string(&v).unwrap();
     assert_eq!(s, "\"-\"\n");
-    let rt: ayml::Value = from_str(&s).unwrap();
+    let rt: Value = from_str(&s).unwrap();
     assert_eq!(v, rt);
 }
 
 #[test]
 fn bare_colon_string_roundtrips() {
     // Same class of bug: a bare `:` also requires a following ns-char.
-    let s = to_string(&ayml::Value::Str(":".into())).unwrap();
+    let s = to_string(&Value::Str(":".into())).unwrap();
     assert_eq!(s, "\":\"\n");
-    let rt: ayml::Value = from_str(&s).unwrap();
-    assert_eq!(rt, ayml::Value::Str(":".into()));
+    let rt: Value = from_str(&s).unwrap();
+    assert_eq!(rt, Value::Str(":".into()));
 }
 
 #[test]
 fn colon_tab_mid_string_quoted() {
     // `:\t` mid-string would be parsed as a mapping value indicator.
-    let v = ayml::Value::Str("foo:\tbar".into());
+    let v = Value::Str("foo:\tbar".into());
     let s = to_string(&v).unwrap();
     assert!(s.starts_with('"'), "should be quoted: {s}");
-    let rt: ayml::Value = from_str(&s).unwrap();
+    let rt: Value = from_str(&s).unwrap();
     assert_eq!(v, rt);
 }
 
@@ -445,18 +436,17 @@ fn mapping_key_with_newline_roundtrips() {
     // Fuzz crash: a mapping key containing \n was triple-quoted by the serializer,
     // but triple-quoted strings span multiple lines and can't be mapping keys.
     // The serializer must use single-line double-quoting for keys with \n.
-    use indexmap::IndexMap;
     let mut inner = IndexMap::new();
-    inner.insert("v".to_string(), ayml::Value::Int(1));
+    inner.insert("v".to_string(), Value::Int(1));
     let mut outer = IndexMap::new();
-    outer.insert("a\nb".to_string(), ayml::Value::Map(inner));
-    let v = ayml::Value::Map(outer);
+    outer.insert("a\nb".to_string(), Value::Map(inner));
+    let v = Value::Map(outer);
     let s = to_string(&v).unwrap();
     assert!(
         s.starts_with("\"a\\nb\":"),
         "key should be double-quoted: {s}"
     );
-    let rt: ayml::Value = from_str(&s).unwrap();
+    let rt: Value = from_str(&s).unwrap();
     assert_eq!(v, rt);
 }
 
@@ -466,9 +456,9 @@ fn bare_numeric_prefix_strings_roundtrip() {
     // The deserializer correctly treats them as strings, so the serializer
     // does not need to quote them.
     for s in ["0b", "0o", "0x", "+0b", "-0x"] {
-        let v = ayml::Value::Str(s.into());
+        let v = Value::Str(s.into());
         let ser = to_string(&v).unwrap();
-        let rt: ayml::Value = from_str(&ser).unwrap();
+        let rt: Value = from_str(&ser).unwrap();
         assert_eq!(v, rt);
     }
 }
@@ -478,13 +468,13 @@ fn overflowing_digit_string_roundtrips() {
     // Fuzz crash: "888...888" (30 digits) exceeds i64 range. The serializer
     // must quote it so it roundtrips as a string, not fail as integer overflow.
     let digits = "8".repeat(30);
-    let v = ayml::Value::Str(digits.clone());
+    let v = Value::Str(digits.clone());
     let s = to_string(&v).unwrap();
     assert!(
         s.starts_with('"'),
         "overflowing digits should be quoted: {s}"
     );
-    let rt: ayml::Value = from_str(&s).unwrap();
+    let rt: Value = from_str(&s).unwrap();
     assert_eq!(v, rt);
 }
 
@@ -492,16 +482,16 @@ fn overflowing_digit_string_roundtrips() {
 fn non_printable_unicode_escaped_in_serializer() {
     // Fuzz crash: U+FFFF is excluded from c-printable but the serializer
     // emitted it as a literal character. It must be escaped as \uffff.
-    let v = ayml::Value::Str("\u{FFFF}".into());
+    let v = Value::Str("\u{FFFF}".into());
     let s = to_string(&v).unwrap();
     assert!(s.contains("\\uffff"), "U+FFFF should be escaped: {s:?}");
-    let rt: ayml::Value = from_str(&s).unwrap();
+    let rt: Value = from_str(&s).unwrap();
     assert_eq!(v, rt);
 
     // U+FFFE is also excluded from c-printable
-    let v2 = ayml::Value::Str("\u{FFFE}".into());
+    let v2 = Value::Str("\u{FFFE}".into());
     let s2 = to_string(&v2).unwrap();
     assert!(s2.contains("\\ufffe"), "U+FFFE should be escaped: {s2:?}");
-    let rt2: ayml::Value = from_str(&s2).unwrap();
+    let rt2: Value = from_str(&s2).unwrap();
     assert_eq!(v2, rt2);
 }

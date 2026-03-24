@@ -1,4 +1,7 @@
-use ayml_core::{MapKey, Node, Span, Value};
+use ayml_core::{
+    error::Span,
+    value::{MapKey, Node, Value},
+};
 use indexmap::IndexMap;
 use proptest::prelude::*;
 

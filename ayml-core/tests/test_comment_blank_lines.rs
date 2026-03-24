@@ -1,4 +1,4 @@
-use ayml_core::{MapKey, parse};
+use ayml_core::{parse, value::MapKey};
 
 #[test]
 fn blank_line_between_top_comments_preserved() {

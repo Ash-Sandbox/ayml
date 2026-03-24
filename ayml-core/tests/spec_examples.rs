@@ -1,5 +1,8 @@
 /// Tests based on the full-length examples from the AYML spec.
-use ayml_core::{MapKey, Value, parse};
+use ayml_core::{
+    parse,
+    value::{MapKey, Value},
+};
 
 #[test]
 fn spec_invoice() {

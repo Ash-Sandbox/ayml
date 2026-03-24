@@ -1,3 +1,4 @@
+use ayml::value::Value;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use serde::{Deserialize, Serialize};
 
@@ -145,7 +146,7 @@ macro_rules! bench_de {
             b.iter(|| ayml::from_str::<$type>(s).unwrap());
         });
         $group.bench_with_input(BenchmarkId::new("value", $name), $input, |b, s| {
-            b.iter(|| ayml::from_str::<ayml::Value>(s).unwrap());
+            b.iter(|| ayml::from_str::<Value>(s).unwrap());
         });
     };
 }

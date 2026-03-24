@@ -1,4 +1,8 @@
-use ayml_core::{ErrorKind, MapKey, Value, parse};
+use ayml_core::{
+    error::ErrorKind,
+    parse,
+    value::{MapKey, Value},
+};
 
 // ── Null ─────────────────────────────────────────────────────────
 

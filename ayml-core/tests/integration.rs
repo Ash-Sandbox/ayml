@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::Path;
 
-use ayml_core::{Value, emit, parse};
+use ayml_core::{emit, parse, value::Value};
 
 fn fixture_dir() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))

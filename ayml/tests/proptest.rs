@@ -1,6 +1,6 @@
 //! Property-based tests for ayml roundtrip and robustness.
 
-use ayml::{Value, from_str, to_string};
+use ayml::{from_str, to_string, value::Value};
 use indexmap::IndexMap;
 use proptest::prelude::*;
 
