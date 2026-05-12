@@ -62,11 +62,14 @@ enum Context {
     Flow,
 }
 
-/// How a scalar was written in the source. Tracked so that downstream code
-/// (key validation, the `PrescannedKey` path) can distinguish a quoted key
-/// from a bare key without inspecting raw source bytes.
+/// How a mapping key was written in the source. Tracked so that downstream
+/// code (key validation, the `PrescannedKey` path) can distinguish a quoted
+/// key from a bare key without inspecting raw source bytes.
+///
+/// Triple-quoted scalars are intentionally not represented here: per the
+/// AYML spec they span multiple lines and cannot appear as mapping keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ScalarKind {
+enum MappingKeyKind {
     /// Unquoted (e.g. `foo`, `42`, `true`). Subject to scalar resolution.
     Bare,
     /// Double-quoted (e.g. `"foo"`). Always a string regardless of content.
@@ -899,7 +902,7 @@ impl<'de, R: Read> de::Deserializer<'de> for &mut Deserializer<R> {
                         self.enter_collection()?;
                         let key = PrescannedKey {
                             text: s,
-                            kind: ScalarKind::DoubleQuoted,
+                            kind: MappingKeyKind::DoubleQuoted,
                         };
                         let value = visitor.visit_map(MapAccess::with_prescanned_key(
                             self,
@@ -959,7 +962,7 @@ impl<'de, R: Read> de::Deserializer<'de> for &mut Deserializer<R> {
                         self.enter_collection()?;
                         let key = PrescannedKey {
                             text,
-                            kind: ScalarKind::Bare,
+                            kind: MappingKeyKind::Bare,
                         };
                         let value = visitor.visit_map(MapAccess::with_prescanned_key(
                             self,
@@ -1367,7 +1370,7 @@ struct MapAccess<'a, R> {
 
 struct PrescannedKey {
     text: String,
-    kind: ScalarKind,
+    kind: MappingKeyKind,
 }
 
 impl<'a, R> MapAccess<'a, R> {
@@ -1400,20 +1403,20 @@ impl<R: Read> MapAccess<'_, R> {
     /// Scan the next key from `self.de`, returning the parsed text and the
     /// scalar kind. AYML keys are either double-quoted strings or bare
     /// scalars (which may resolve to int/bool/string).
-    fn scan_key(&mut self) -> Result<(String, ScalarKind)> {
+    fn scan_key(&mut self) -> Result<(String, MappingKeyKind)> {
         if self.de.peek()? == Some(b'"') {
             let s = self.de.scan_quoted_string()?;
-            Ok((s, ScalarKind::DoubleQuoted))
+            Ok((s, MappingKeyKind::DoubleQuoted))
         } else {
             let s = self.de.scan_bare_string(self.de.ctx)?;
-            Ok((s, ScalarKind::Bare))
+            Ok((s, MappingKeyKind::Bare))
         }
     }
 
     /// Reject keys whose bare form resolves to `null` or a float, per AYML spec.
     /// Double-quoted keys are always strings and need no validation.
-    fn validate_key(&self, text: &str, kind: ScalarKind) -> Result<()> {
-        if kind == ScalarKind::DoubleQuoted {
+    fn validate_key(&self, text: &str, kind: MappingKeyKind) -> Result<()> {
+        if kind == MappingKeyKind::DoubleQuoted {
             return Ok(());
         }
         if text == "null" {
@@ -1631,7 +1634,7 @@ impl<'de> de::Deserializer<'de> for OptionStringDeserializer {
 /// continue to work without re-parsing source bytes.
 struct KeyDeserializer {
     text: String,
-    kind: ScalarKind,
+    kind: MappingKeyKind,
 }
 
 impl<'de> de::Deserializer<'de> for KeyDeserializer {
@@ -1639,8 +1642,8 @@ impl<'de> de::Deserializer<'de> for KeyDeserializer {
 
     fn deserialize_any<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
         match self.kind {
-            ScalarKind::DoubleQuoted => visitor.visit_string(self.text),
-            ScalarKind::Bare => match self.text.as_str() {
+            MappingKeyKind::DoubleQuoted => visitor.visit_string(self.text),
+            MappingKeyKind::Bare => match self.text.as_str() {
                 "true" => visitor.visit_bool(true),
                 "false" => visitor.visit_bool(false),
                 _ => match try_parse_int(&self.text) {
