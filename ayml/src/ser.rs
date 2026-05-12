@@ -595,10 +595,14 @@ impl<W: std::io::Write> Compound<'_, W> {
                     // no longer applies.
                     self.ser.compact = false;
                     for line in comment.lines() {
-                        self.ser.write_spaces(comment_indent)?;
-                        self.ser.write_str("# ")?;
-                        self.ser.write_str(line)?;
-                        self.ser.write_str("\n")?;
+                        if line.is_empty() {
+                            self.ser.write_str("\n")?;
+                        } else {
+                            self.ser.write_spaces(comment_indent)?;
+                            self.ser.write_str("# ")?;
+                            self.ser.write_str(line)?;
+                            self.ser.write_str("\n")?;
+                        }
                     }
                     // Now position for the value to start inline.
                     // Write indent at the appropriate level, then flush

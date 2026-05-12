@@ -1,4 +1,8 @@
-use ayml::Commented;
+use ayml::{
+    commented::Commented,
+    commented_value::{CommentedValue, CommentedValueKind},
+};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 // ── Deserialization tests ───────────────────────────────────────────
@@ -325,8 +329,6 @@ fn ser_commented_seq_as_map_value() {
 
 #[test]
 fn ser_commented_seq_as_toplevel_map_value() {
-    use ayml::{CommentedValue, CommentedValueKind};
-    use indexmap::IndexMap;
     let mut m = IndexMap::new();
     m.insert(
         "A".to_string(),
@@ -343,8 +345,6 @@ fn ser_commented_seq_as_toplevel_map_value() {
 
 #[test]
 fn ser_commented_value_seq_in_map() {
-    use ayml::{CommentedValue, CommentedValueKind};
-    use indexmap::IndexMap;
     let mut inner = IndexMap::new();
     inner.insert(
         "a".to_string(),

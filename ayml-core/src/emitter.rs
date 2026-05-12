@@ -27,8 +27,12 @@ fn needs_block(value: &Value) -> bool {
 fn emit_comment(out: &mut String, comment: Option<&str>, indent: usize) {
     if let Some(comment) = comment {
         for line in comment.lines() {
-            emit_indent(out, indent);
-            let _ = writeln!(out, "# {line}");
+            if line.is_empty() {
+                out.push('\n');
+            } else {
+                emit_indent(out, indent);
+                let _ = writeln!(out, "# {line}");
+            }
         }
     }
 }

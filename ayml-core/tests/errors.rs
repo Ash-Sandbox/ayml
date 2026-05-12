@@ -1,4 +1,8 @@
-use ayml_core::{ErrorKind, MapKey, Value, parse, parse_with_max_depth};
+use ayml_core::{
+    error::ErrorKind,
+    parse, parse_with_max_depth,
+    value::{MapKey, Value},
+};
 
 #[test]
 fn duplicate_key() {

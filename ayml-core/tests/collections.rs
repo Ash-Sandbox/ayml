@@ -1,6 +1,9 @@
-use ayml_core::{MapKey, Value, parse};
-
 // ── Block Sequences ──────────────────────────────────────────────
+
+use ayml_core::{
+    parse,
+    value::{MapKey, Value},
+};
 
 #[test]
 fn sequence_of_scalars() {

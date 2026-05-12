@@ -1,0 +1,14 @@
+id = "ayml"
+name = "AYML"
+version = "0.0.1"
+schema_version = 1
+authors = ["Alex <alex@ashell.dev>"]
+description = "AYML language support for Zed"
+
+[grammars.ayml]
+repository = "https://github.com/alex-shapiro/tree-sitter-ayml"
+rev = "0c5047697a53ec6ab0ea5bdfe0bfa122c78ac680"
+
+[language_servers.ayml-lsp]
+name = "ayml-lsp"
+languages = ["AYML"]

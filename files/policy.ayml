@@ -1,0 +1,25 @@
+# language-server: $schema=https://hub.ashell.dev/schemas/policy/v1.json
+
+schema_version: 1
+files:
+  rules:
+  - path: ./**
+  - path: /Applications/Visual Studio Code.app/Contents/Resources/app/bin/code
+    operations:
+    - read
+network:
+  # Network access \asdfjasldfkj lakjsdf &'nbsp; rules
+  rules:
+    # Allow GitHub
+    - host: "hello\\\"#world\"" # primary domain
+      direction: outbound
+      ports:
+        - 443
+        - 22
+    # Deny all other traffic
+    - host: 0.0.0.0/0
+      action: deny
+      ports: "all"
+      precedence: -1
+    # Flow element
+    - {host: "hello there!", action: allow, ports: all}

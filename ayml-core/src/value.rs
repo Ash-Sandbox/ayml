@@ -1,6 +1,8 @@
 use indexmap::IndexMap;
 use std::fmt;
 
+use crate::error::Span;
+
 /// A node in the AYML document tree.
 ///
 /// Wraps a [`Value`] with optional comment metadata. The reference
@@ -15,25 +17,30 @@ pub struct Node {
     pub inline_comment: Option<String>,
     /// The value of this node.
     pub value: Value,
+    /// Byte-offset span of this node in the source input.
+    /// Defaults to `Span::new(0, 0)` when not set by the parser.
+    pub span: Span,
 }
 
 impl Node {
-    /// Create a node with no comments.
+    /// Create a node with no comments and a default (empty) span.
     #[must_use]
     pub const fn new(value: Value) -> Self {
         Self {
             comment: None,
             inline_comment: None,
             value,
+            span: Span::new(0, 0),
         }
     }
 
-    /// Create a node with a top comment.
+    /// Create a node with a top comment and a default (empty) span.
     pub fn with_comment(value: Value, comment: impl Into<String>) -> Self {
         Self {
             comment: Some(comment.into()),
             inline_comment: None,
             value,
+            span: Span::new(0, 0),
         }
     }
 }

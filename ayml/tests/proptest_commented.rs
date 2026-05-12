@@ -1,6 +1,9 @@
 //! Property-based tests for CommentedValue roundtrip and robustness.
 
-use ayml::{CommentedValue, CommentedValueKind, from_str, to_string};
+use ayml::{
+    commented_value::{CommentedValue, CommentedValueKind},
+    from_str, to_string,
+};
 use indexmap::IndexMap;
 use proptest::prelude::*;
 
@@ -46,11 +49,19 @@ fn arb_opt_comment() -> impl Strategy<Value = Option<String>> {
 }
 
 /// Optional multi-line top comment (1-3 lines joined with \n).
+/// May include blank lines between comment lines.
 fn arb_opt_top_comment() -> impl Strategy<Value = Option<String>> {
     prop_oneof![
         3 => Just(None),
+        // Consecutive comment lines
         1 => prop::collection::vec(arb_comment_line(), 1..=3)
             .prop_map(|lines| Some(lines.join("\n"))),
+        // Two comment lines separated by a blank line
+        1 => (arb_comment_line(), arb_comment_line())
+            .prop_map(|(a, b)| Some(format!("{a}\n\n{b}"))),
+        // Three comment lines with blank lines
+        1 => (arb_comment_line(), arb_comment_line(), arb_comment_line())
+            .prop_map(|(a, b, c)| Some(format!("{a}\n\n{b}\n\n{c}"))),
     ]
 }
 
@@ -238,5 +249,48 @@ proptest! {
     #[test]
     fn commented_value_serialize_no_panic(value in arb_commented_value(3)) {
         let _ = to_string(&value);
+    }
+
+    /// Blank lines within comments survive serde serialize → deserialize.
+    #[test]
+    fn blank_lines_in_comments_serde_stable(
+        comment_a in "[a-zA-Z0-9]{1,10}",
+        comment_b in "[a-zA-Z0-9]{1,10}",
+        blanks in 1..4usize,
+    ) {
+        let sep = "\n".repeat(blanks + 1);
+        let comment = format!("{comment_a}{sep}{comment_b}");
+        let blank_lines = "\n".repeat(blanks);
+        let input = format!("# {comment_a}\n{blank_lines}# {comment_b}\nkey: value\n");
+
+        let parsed: CommentedValue = from_str(&input).map_err(|e| {
+            TestCaseError::fail(format!("parse failed: {e}\n--- input ---\n{input}---"))
+        })?;
+
+        // The top comment should preserve blank lines.
+        prop_assert!(
+            parsed.top_comment.as_deref() == Some(comment.as_str()),
+            "blank lines not preserved in serde.\nparsed: {:?}\nexpected: {:?}\n--- input ---\n{}---",
+            parsed.top_comment,
+            comment,
+            input,
+        );
+
+        // Re-serialize and re-parse — should be stable.
+        let serialized = to_string(&parsed).map_err(|e| {
+            TestCaseError::fail(format!("serialize failed: {e}"))
+        })?;
+        let re_parsed: CommentedValue = from_str(&serialized).map_err(|e| {
+            TestCaseError::fail(format!(
+                "re-parse failed: {e}\n--- serialized ---\n{serialized}---"
+            ))
+        })?;
+        prop_assert!(
+            parsed.top_comment == re_parsed.top_comment,
+            "comment changed after re-serialize.\nfirst: {:?}\nsecond: {:?}\n--- serialized ---\n{}---",
+            parsed.top_comment,
+            re_parsed.top_comment,
+            serialized,
+        );
     }
 }

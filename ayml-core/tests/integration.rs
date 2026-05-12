@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::Path;
 
-use ayml_core::{Value, emit, parse};
+use ayml_core::{emit, parse, value::Value};
 
 fn fixture_dir() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -20,7 +20,7 @@ fn collect_fixtures() -> Vec<(String, String)> {
     for entry in fs::read_dir(dir).expect("failed to read files/ directory") {
         let entry = entry.unwrap();
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("yml") {
+        if path.extension().and_then(|e| e.to_str()) == Some("ayml") {
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
             let content = fs::read_to_string(&path).unwrap();
             files.push((name, content));

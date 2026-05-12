@@ -7,7 +7,7 @@
 //!
 //! Run: cargo run -p ayml --example policy
 
-use ayml::Commented;
+use ayml::commented::Commented;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

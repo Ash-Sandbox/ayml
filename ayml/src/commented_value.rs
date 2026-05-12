@@ -4,7 +4,7 @@
 //! tree carries optional top and inline comments, and the recursive children
 //! (sequences and mappings) are themselves `CommentedValue`s.
 
-use crate::Commented;
+use crate::commented::Commented;
 use crate::fmt_helpers::{display_float, display_str};
 use indexmap::IndexMap;
 use serde::de::{self, Visitor};
@@ -188,7 +188,11 @@ impl fmt::Display for CommentedValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(ref comment) = self.top_comment {
             for line in comment.lines() {
-                writeln!(f, "# {line}")?;
+                if line.is_empty() {
+                    writeln!(f)?;
+                } else {
+                    writeln!(f, "# {line}")?;
+                }
             }
         }
         self.value.fmt(f)?;
