@@ -62,12 +62,8 @@ enum Context {
     Flow,
 }
 
-/// How a mapping key was written in the source. Tracked so that downstream
-/// code (key validation, the `PrescannedKey` path) can distinguish a quoted
-/// key from a bare key without inspecting raw source bytes.
-///
-/// Triple-quoted scalars are intentionally not represented here: per the
-/// AYML spec they span multiple lines and cannot appear as mapping keys.
+/// How a mapping key was written in the source. AYML keys are always
+/// single-line — either bare or double-quoted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MappingKeyKind {
     /// Unquoted (e.g. `foo`, `42`, `true`). Subject to scalar resolution.
@@ -1628,10 +1624,10 @@ impl<'de> de::Deserializer<'de> for OptionStringDeserializer {
 
 // ── KeyDeserializer ──────────────────────────────────────────────
 
-/// Deserializer that delivers a pre-scanned map key to a seed. Scalar
-/// resolution for bare keys mirrors `deserialize_any` on the main parser
-/// (bool / int / string), so `HashMap<i64, _>`, `HashMap<bool, _>`, etc.
-/// continue to work without re-parsing source bytes.
+/// Deserializer that delivers a pre-scanned map key to a seed.
+///
+/// Bare keys go through scalar resolution (`true`/`false` → bool,
+/// digits → integer, else string). Double-quoted keys are always strings.
 struct KeyDeserializer {
     text: String,
     kind: MappingKeyKind,
