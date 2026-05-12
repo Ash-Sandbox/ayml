@@ -3,9 +3,9 @@
 schema_version: 1
 dependencies:
   ash/base-macos: ^0
-  ash/claude-code: ^0.0.4
+  ash/claude-code: ^0
   ash/git: ^0
-  ash/github: ^0.0.1
+  ash/github: ^0
   ash/rust-dev: ^0
 files:
   rules:
