@@ -479,6 +479,57 @@ fn overflowing_digit_string_roundtrips() {
 }
 
 #[test]
+fn key_deserialize_any_does_not_spuriously_dedup() {
+    // Issue #11: with the old byte-recording mechanism, any key whose
+    // `Deserialize` impl called `deserialize_any` (custom impls, serde's
+    // `Content`-buffer replay for `#[serde(untagged)]`, etc.) was observed
+    // as an empty string by the outer `MapAccess`. The second such key then
+    // tripped the duplicate-key check with a spurious `duplicate key \`\``.
+    use std::fmt;
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct AnyKey(String);
+    impl<'de> serde::Deserialize<'de> for AnyKey {
+        fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> serde::de::Visitor<'de> for V {
+                type Value = AnyKey;
+                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    write!(f, "any key")
+                }
+                fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<AnyKey, E> {
+                    Ok(AnyKey(s.into()))
+                }
+                fn visit_string<E: serde::de::Error>(self, s: String) -> Result<AnyKey, E> {
+                    Ok(AnyKey(s))
+                }
+            }
+            d.deserialize_any(V)
+        }
+    }
+    let input = "alpha: 1\nbeta: 2\ngamma: 3\n";
+    let parsed: BTreeMap<AnyKey, i32> = from_str(input).unwrap();
+    assert_eq!(parsed.len(), 3);
+    assert_eq!(parsed[&AnyKey("alpha".into())], 1);
+    assert_eq!(parsed[&AnyKey("beta".into())], 2);
+    assert_eq!(parsed[&AnyKey("gamma".into())], 3);
+}
+
+#[test]
+fn quoted_and_bare_same_key_is_duplicate() {
+    // Dedup is now done on the parsed key text, not raw source bytes, so a
+    // quoted key and a bare key that resolve to the same string collide as
+    // they should. (Old behaviour: hashed on raw bytes, missed the dup.)
+    let input = "\"foo\": 1\nfoo: 2\n";
+    let result: Result<HashMap<String, i32>, _> = from_str(input);
+    assert!(
+        result
+            .as_ref()
+            .is_err_and(|e| e.to_string().contains("duplicate key")),
+        "expected duplicate-key error, got: {result:?}"
+    );
+}
+
+#[test]
 fn non_printable_unicode_escaped_in_serializer() {
     // Fuzz crash: U+FFFF is excluded from c-printable but the serializer
     // emitted it as a literal character. It must be escaped as \uffff.
