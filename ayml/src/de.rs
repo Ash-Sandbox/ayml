@@ -62,6 +62,17 @@ enum Context {
     Flow,
 }
 
+/// How a scalar was written in the source. Tracked so that downstream code
+/// (key validation, the `PrescannedKey` path) can distinguish a quoted key
+/// from a bare key without inspecting raw source bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScalarKind {
+    /// Unquoted (e.g. `foo`, `42`, `true`). Subject to scalar resolution.
+    Bare,
+    /// Double-quoted (e.g. `"foo"`). Always a string regardless of content.
+    DoubleQuoted,
+}
+
 // ── Deserializer ─────────────────────────────────────────────────
 
 /// Maximum nesting depth for collections to prevent stack overflow / OOM.
@@ -70,11 +81,9 @@ const MAX_DEPTH: usize = 64;
 pub(crate) struct Deserializer<R> {
     read: R,
     ctx: Context,
-    reading_key: bool,
     pending_top_comment: Option<String>,
     depth: usize,
     scratch: String,
-    recording: Option<Vec<u8>>,
     line: usize,
     line_start: usize,
 }
@@ -84,11 +93,9 @@ impl<'a> Deserializer<SliceRead<'a>> {
         Self {
             read: SliceRead::new(s.as_bytes()),
             ctx: Context::Block,
-            reading_key: false,
             pending_top_comment: None,
             depth: 0,
             scratch: String::new(),
-            recording: None,
             line: 1,
             line_start: 0,
         }
@@ -100,11 +107,9 @@ impl<R: std::io::Read> Deserializer<IoRead<R>> {
         Self {
             read: IoRead::new(rdr),
             ctx: Context::Block,
-            reading_key: false,
             pending_top_comment: None,
             depth: 0,
             scratch: String::new(),
-            recording: None,
             line: 1,
             line_start: 0,
         }
@@ -114,15 +119,9 @@ impl<R: std::io::Read> Deserializer<IoRead<R>> {
 // ── Character-level helpers ──────────────────────────────────────
 
 impl<R: Read> Deserializer<R> {
-    /// Consume the next byte, recording it if recording is active.
+    /// Consume the next byte.
     fn next_byte(&mut self) -> Result<Option<u8>> {
-        let b = self.read.next()?;
-        if let Some(b) = b
-            && let Some(rec) = &mut self.recording
-        {
-            rec.push(b);
-        }
-        Ok(b)
+        self.read.next()
     }
 
     /// Peek at the next byte.
@@ -869,20 +868,6 @@ impl<R: Read> Deserializer<R> {
         }
     }
 
-    /// Start recording bytes consumed via `next_byte`.
-    fn start_recording(&mut self) {
-        self.recording = Some(Vec::new());
-    }
-
-    /// Stop recording and return the recorded bytes as a String.
-    ///
-    /// Returns an empty string if no recording is active (this happens during
-    /// serde `Content`-based replay for untagged enums).
-    fn stop_recording(&mut self) -> Result<String> {
-        let bytes = self.recording.take().unwrap_or_default();
-        Ok(String::from_utf8(bytes)?)
-    }
-
     /// Check if the upcoming bytes spell "null" followed by a terminator.
     fn is_null_ahead(&mut self) -> Result<bool> {
         Ok(self.peek_at(0)? == Some(b'n')
@@ -905,16 +890,17 @@ impl<'de, R: Read> de::Deserializer<'de> for &mut Deserializer<R> {
         match self.peek()? {
             Some(b'"') => {
                 let start_indent = self.current_indent();
-                self.start_recording();
                 let s = self.scan_quoted_string()?;
-                let raw = self.stop_recording()?;
-                if !self.reading_key && self.ctx == Context::Block {
+                if self.ctx == Context::Block {
                     self.skip_inline_whitespace()?;
                     if self.is_mapping_value_indicator()? {
                         self.next_byte()?; // consume ':'
                         self.skip_inline_whitespace()?;
                         self.enter_collection()?;
-                        let key = PrescannedKey { value: s, raw };
+                        let key = PrescannedKey {
+                            text: s,
+                            kind: ScalarKind::DoubleQuoted,
+                        };
                         let value = visitor.visit_map(MapAccess::with_prescanned_key(
                             self,
                             MapStyle::Block(start_indent),
@@ -964,16 +950,17 @@ impl<'de, R: Read> de::Deserializer<'de> for &mut Deserializer<R> {
             Some(_) => {
                 let start_indent = self.current_indent();
                 let start_offset = self.byte_offset();
-                self.start_recording();
                 let text = self.scan_bare_string(self.ctx)?;
-                let raw = self.stop_recording()?;
-                if !self.reading_key && self.ctx == Context::Block {
+                if self.ctx == Context::Block {
                     self.skip_inline_whitespace()?;
                     if self.is_mapping_value_indicator()? {
                         self.next_byte()?; // consume ':'
                         self.skip_inline_whitespace()?;
                         self.enter_collection()?;
-                        let key = PrescannedKey { value: text, raw };
+                        let key = PrescannedKey {
+                            text,
+                            kind: ScalarKind::Bare,
+                        };
                         let value = visitor.visit_map(MapAccess::with_prescanned_key(
                             self,
                             MapStyle::Block(start_indent),
@@ -1379,8 +1366,8 @@ struct MapAccess<'a, R> {
 }
 
 struct PrescannedKey {
-    value: String,
-    raw: String,
+    text: String,
+    kind: ScalarKind,
 }
 
 impl<'a, R> MapAccess<'a, R> {
@@ -1410,23 +1397,38 @@ impl<'a, R> MapAccess<'a, R> {
 }
 
 impl<R: Read> MapAccess<'_, R> {
-    fn validate_key(&self, key_text: &str) -> Result<()> {
-        if key_text.starts_with('"') {
+    /// Scan the next key from `self.de`, returning the parsed text and the
+    /// scalar kind. AYML keys are either double-quoted strings or bare
+    /// scalars (which may resolve to int/bool/string).
+    fn scan_key(&mut self) -> Result<(String, ScalarKind)> {
+        if self.de.peek()? == Some(b'"') {
+            let s = self.de.scan_quoted_string()?;
+            Ok((s, ScalarKind::DoubleQuoted))
+        } else {
+            let s = self.de.scan_bare_string(self.de.ctx)?;
+            Ok((s, ScalarKind::Bare))
+        }
+    }
+
+    /// Reject keys whose bare form resolves to `null` or a float, per AYML spec.
+    /// Double-quoted keys are always strings and need no validation.
+    fn validate_key(&self, text: &str, kind: ScalarKind) -> Result<()> {
+        if kind == ScalarKind::DoubleQuoted {
             return Ok(());
         }
-        let bare = key_text.trim();
-        if bare == "null" {
+        if text == "null" {
             return Err(self
                 .de
                 .error("unquoted `null` is not allowed as a mapping key; use \"null\""));
         }
-        if try_parse_float(bare).is_some() {
+        if try_parse_float(text).is_some() {
             return Err(self.de.error(&format!(
-                "unquoted `{bare}` resolves to float and is not allowed as a mapping key; quote it"
+                "unquoted `{text}` resolves to float and is not allowed as a mapping key; quote it"
             )));
         }
         Ok(())
     }
+
 }
 
 impl<'de, R: Read> de::MapAccess<'de> for MapAccess<'_, R> {
@@ -1453,33 +1455,35 @@ impl<'de, R: Read> de::MapAccess<'de> for MapAccess<'_, R> {
                     }
                 }
                 self.first = false;
-                self.de.reading_key = true;
-                self.de.start_recording();
-                let key = seed.deserialize(&mut *self.de)?;
-                let key_text = self.de.stop_recording()?;
-                self.de.reading_key = false;
-                self.validate_key(&key_text)?;
-                if !self.seen_keys.insert(key_text.clone()) {
-                    return Err(self.de.error(&format!("duplicate key `{key_text}`")));
+
+                let (text, kind) = self.scan_key()?;
+                self.validate_key(&text, kind)?;
+                if !self.seen_keys.insert(text.clone()) {
+                    return Err(self.de.error(&format!("duplicate key `{text}`")));
                 }
                 self.de.skip_whitespace_and_comments()?;
                 if !self.de.eat(b':')? {
                     return Err(self.de.error("expected `:` after mapping key"));
                 }
                 self.de.skip_whitespace_and_comments()?;
-                Ok(Some(key))
+                Ok(Some(seed.deserialize(KeyDeserializer { text, kind })?))
             }
             MapStyle::Block(indent) => {
                 let indent = *indent;
                 if self.first {
                     self.first = false;
                     if let Some(key) = self.prescanned_first_key.take() {
-                        self.validate_key(&key.raw)?;
-                        if !self.seen_keys.insert(key.raw) {
-                            return Err(self.de.error("duplicate key"));
+                        // The colon and post-colon whitespace were already
+                        // consumed by deserialize_any before MapAccess was
+                        // created, so we go straight to seed dispatch.
+                        self.validate_key(&key.text, key.kind)?;
+                        if !self.seen_keys.insert(key.text.clone()) {
+                            return Err(self.de.error(&format!("duplicate key `{}`", key.text)));
                         }
-                        let val = seed
-                            .deserialize(de::value::StringDeserializer::<Error>::new(key.value))?;
+                        let val = seed.deserialize(KeyDeserializer {
+                            text: key.text,
+                            kind: key.kind,
+                        })?;
                         return Ok(Some(val));
                     }
                 } else {
@@ -1505,21 +1509,17 @@ impl<'de, R: Read> de::MapAccess<'de> for MapAccess<'_, R> {
                     self.de.eat_spaces(indent)?;
                 }
 
-                self.de.reading_key = true;
-                self.de.start_recording();
-                let key = seed.deserialize(&mut *self.de)?;
-                let key_text = self.de.stop_recording()?;
-                self.de.reading_key = false;
-                self.validate_key(&key_text)?;
-                if !self.seen_keys.insert(key_text.clone()) {
-                    return Err(self.de.error(&format!("duplicate key `{key_text}`")));
+                let (text, kind) = self.scan_key()?;
+                self.validate_key(&text, kind)?;
+                if !self.seen_keys.insert(text.clone()) {
+                    return Err(self.de.error(&format!("duplicate key `{text}`")));
                 }
                 self.de.skip_inline_whitespace()?;
                 if !self.de.eat(b':')? {
                     return Err(self.de.error("expected `:` after mapping key"));
                 }
                 self.de.skip_inline_whitespace()?;
-                Ok(Some(key))
+                Ok(Some(seed.deserialize(KeyDeserializer { text, kind })?))
             }
         }
     }
@@ -1620,6 +1620,131 @@ impl<'de> de::Deserializer<'de> for OptionStringDeserializer {
         bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string
         bytes byte_buf unit unit_struct newtype_struct seq tuple
         tuple_struct map struct enum identifier ignored_any
+    }
+}
+
+// ── KeyDeserializer ──────────────────────────────────────────────
+
+/// Deserializer that delivers a pre-scanned map key to a seed. Scalar
+/// resolution for bare keys mirrors `deserialize_any` on the main parser
+/// (bool / int / string), so `HashMap<i64, _>`, `HashMap<bool, _>`, etc.
+/// continue to work without re-parsing source bytes.
+struct KeyDeserializer {
+    text: String,
+    kind: ScalarKind,
+}
+
+impl<'de> de::Deserializer<'de> for KeyDeserializer {
+    type Error = Error;
+
+    fn deserialize_any<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        match self.kind {
+            ScalarKind::DoubleQuoted => visitor.visit_string(self.text),
+            ScalarKind::Bare => match self.text.as_str() {
+                "true" => visitor.visit_bool(true),
+                "false" => visitor.visit_bool(false),
+                _ => match try_parse_int(&self.text) {
+                    Ok(Some(i)) => visitor.visit_i64(i),
+                    Err(()) => Err(Error::Message(format!(
+                        "integer key overflow: `{}`",
+                        self.text
+                    ))),
+                    // null / float keys were rejected by validate_key earlier;
+                    // anything else is a string.
+                    Ok(None) => visitor.visit_string(self.text),
+                },
+            },
+        }
+    }
+
+    fn deserialize_str<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        visitor.visit_string(self.text)
+    }
+
+    fn deserialize_string<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        visitor.visit_string(self.text)
+    }
+
+    fn deserialize_identifier<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        visitor.visit_string(self.text)
+    }
+
+    fn deserialize_bool<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        match self.text.as_str() {
+            "true" => visitor.visit_bool(true),
+            "false" => visitor.visit_bool(false),
+            _ => Err(Error::Message(format!(
+                "expected boolean key, got `{}`",
+                self.text
+            ))),
+        }
+    }
+
+    fn deserialize_i8<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        visitor.visit_i8(parse_int_key(&self.text)?)
+    }
+    fn deserialize_i16<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        visitor.visit_i16(parse_int_key(&self.text)?)
+    }
+    fn deserialize_i32<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        visitor.visit_i32(parse_int_key(&self.text)?)
+    }
+    fn deserialize_i64<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        visitor.visit_i64(parse_int_key(&self.text)?)
+    }
+    fn deserialize_u8<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        visitor.visit_u8(parse_int_key(&self.text)?)
+    }
+    fn deserialize_u16<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        visitor.visit_u16(parse_int_key(&self.text)?)
+    }
+    fn deserialize_u32<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        visitor.visit_u32(parse_int_key(&self.text)?)
+    }
+    fn deserialize_u64<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        visitor.visit_u64(parse_int_key(&self.text)?)
+    }
+
+    fn deserialize_option<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        // Null keys are forbidden by validate_key, so any key we see here is
+        // a real value — never None.
+        visitor.visit_some(self)
+    }
+
+    fn deserialize_newtype_struct<V: de::Visitor<'de>>(
+        self,
+        _name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value> {
+        visitor.visit_newtype_struct(self)
+    }
+
+    fn deserialize_enum<V: de::Visitor<'de>>(
+        self,
+        _name: &'static str,
+        _variants: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value> {
+        visitor.visit_enum(de::value::StringDeserializer::<Error>::new(self.text))
+    }
+
+    serde::forward_to_deserialize_any! {
+        f32 f64 char bytes byte_buf unit unit_struct
+        seq tuple tuple_struct map struct ignored_any
+    }
+}
+
+/// Parse `text` as an integer key, mapping it through `T` (e.g. `i8`, `u32`).
+fn parse_int_key<T: TryFrom<i64>>(text: &str) -> Result<T>
+where
+    T::Error: std::fmt::Display,
+{
+    match try_parse_int(text) {
+        Ok(Some(i)) => {
+            T::try_from(i).map_err(|e| Error::Message(format!("integer key out of range: {e}")))
+        }
+        Err(()) => Err(Error::Message(format!("integer key overflow: `{text}`"))),
+        Ok(None) => Err(Error::Message(format!("expected integer key, got `{text}`"))),
     }
 }
 
