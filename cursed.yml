@@ -1,0 +1,56 @@
+%YAML 1.2 # don't want to screw up the YAML version
+%TAG !e! tag:ayml.xyz,2026: # oh yeah, we got tags
+---
+# of course you can use a sequence as a mapping key
+key
+? - explicit complex
+  - [nested, seq]
+: &anchor !!str |2
+    folded? no.
+    literal block scalar
+    with explicit indent indicator
+# An empty (null) key, with its value on the next line
+?
+: empty key has null... no, value is here
+# Quoted keys can safely contain : and # without being parsed as structure
+"quoted key with : colon and # hash":
+  # Merge key: pulls the anchored mapping's contents into this one
+  <<: *anchor
+  # A custom-tagged key via the %TAG directive above
+  ? !e!custom typed key
+  : "tab\there\tescaped"
+... # end of first document
+---
+- *anchor
+# Non-specific tag "!" forces the node to be a plain string
+- ! "non-specific tag forces string"
+# Deep nesting mixing block and flow styles
+- - - - deeply: {nested: {flow: [mappings, {in: sequences}]}}
+# Double-quoted scalars allow escaped line continuations; the backslash eats the newline
+- "double \
+  quoted line \
+  continuation eats leading space"
+# In single quotes, '' is the only escape (a literal apostrophe)
+- 'single ''escaped'' quote'
+- key with spaces: value
+  # Another complex multiline key
+  ? complex
+    multiline
+    key
+  : *anchor
+- !!map
+  # YAML 1.2 dropped these as booleans — they are plain strings now
+  truthy values that are NOT booleans in 1.2: [yes, no, on, off, Y, N]
+  # Only these are real booleans in the core schema
+  actual booleans: [true, false]
+  # All of these resolve to null
+  null forms: [null, ~, Null, NULL, ]
+  # ...but these do not
+  not null: [None, none, nil]
+  # 1.1 read this as base-60 (5400); 1.2 reads it as a plain string
+  sexagesimal is gone in 1.2: 1:30:00
+  # Non-decimal and special-float syntaxes are also just strings here
+  these are strings now: [0o7, 0x1F, .inf, .nan, -.inf]
+  base60 here is a plain string: 12:34:56
+  # A value keyed by null (the empty "?" line)
+  ?
