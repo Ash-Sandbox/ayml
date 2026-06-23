@@ -34,6 +34,10 @@ files:
   - path: /opt/X11/bin
     action: deny
   - path: /opt/homebrew/Caskroom/antigravity-cli/**
+  - path: /opt/homebrew/bin/.update_test2084072401
+    operations:
+    - create
+    - delete
   - path: /opt/homebrew/bin/agy
   - path: ~/.cache/tree-sitter/**
   - path: ~/.gemini/**
@@ -68,6 +72,54 @@ files:
     - read
 network:
   rules:
+  - host: 140.82.113.3
+    ports:
+    - 443
+  - host: 140.82.114.3
+    ports:
+    - 443
+  - host: 142.251.215.225
+    ports:
+    - 443
+  - host: 2001:4860:4802:32::223
+    ports:
+    - 443
+  - host: 2001:4860:4802:34::223
+    ports:
+    - 443
+  - host: 2001:4860:4802:36::223
+    ports:
+    - 443
+  - host: 2001:4860:4802:38::223
+    ports:
+    - 443
+  - host: 2607:f8b0:4007:808::200a
+    ports:
+    - 443
+  - host: 2607:f8b0:4007:80c::200a
+    ports:
+    - 443
+  - host: 2607:f8b0:4007:812::200a
+    ports:
+    - 443
+  - host: 2607:f8b0:4007:817::2001
+    ports:
+    - 443
+  - host: 2607:f8b0:4007:817::200a
+    ports:
+    - 443
+  - host: 2607:f8b0:4007:818::200a
+    ports:
+    - 443
+  - host: 2607:f8b0:4023:c03::5f
+    ports:
+    - 443
+  - host: 2a09:8280:1::11c:c6e:0
+    ports:
+    - 443
+  - host: 34.54.84.110
+    ports:
+    - 443
   - host: yaml.org
   - host: zed.dev
     ports:
@@ -81,6 +133,7 @@ exec:
   - path: /opt/homebrew/Cellar/node/25.8.1_1/bin/node
   - path: /opt/homebrew/Cellar/python@3.14/**
   - path: /opt/homebrew/Cellar/tree/*/bin/tree
+  - path: /opt/homebrew/bin/agy
   - path: ~/.cargo/bin/cargo-fuzz
   - path: ~/.cargo/bin/samply
   - path: ~/Library/Caches/ms-playwright-go/1.57.0/node

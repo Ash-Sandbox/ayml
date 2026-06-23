@@ -195,24 +195,7 @@ fn de_any_map() {
 
 // ── Numeric bases ───────────────────────────────────────────────
 
-#[test]
-fn de_hex_integer() {
-    assert_eq!(from_str::<i32>("0xFF").unwrap(), 255);
-    assert_eq!(from_str::<i32>("0xC").unwrap(), 12);
-    assert_eq!(from_str::<u32>("0xDEADBEEF").unwrap(), 0xDEADBEEF);
-}
 
-#[test]
-fn de_octal_integer() {
-    assert_eq!(from_str::<i32>("0o14").unwrap(), 12);
-    assert_eq!(from_str::<i32>("0o77").unwrap(), 63);
-}
-
-#[test]
-fn de_binary_integer() {
-    assert_eq!(from_str::<i32>("0b1010").unwrap(), 10);
-    assert_eq!(from_str::<i32>("0b10101010").unwrap(), 170);
-}
 
 #[test]
 fn de_signed_integer_prefix() {

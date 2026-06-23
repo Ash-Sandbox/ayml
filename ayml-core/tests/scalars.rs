@@ -62,7 +62,7 @@ fn integer_binary() {
     let map = node.value.as_mapping().unwrap();
     assert_eq!(
         map[&MapKey::String("n".into())].value,
-        Value::Int(0b10101010)
+        Value::Str("0b10101010".into())
     );
 }
 
@@ -70,14 +70,14 @@ fn integer_binary() {
 fn integer_octal() {
     let node = parse("n: 0o14").unwrap();
     let map = node.value.as_mapping().unwrap();
-    assert_eq!(map[&MapKey::String("n".into())].value, Value::Int(0o14));
+    assert_eq!(map[&MapKey::String("n".into())].value, Value::Str("0o14".into()));
 }
 
 #[test]
 fn integer_hex() {
     let node = parse("n: 0xC").unwrap();
     let map = node.value.as_mapping().unwrap();
-    assert_eq!(map[&MapKey::String("n".into())].value, Value::Int(0xC));
+    assert_eq!(map[&MapKey::String("n".into())].value, Value::Str("0xC".into()));
 }
 
 #[test]
@@ -117,14 +117,14 @@ fn integer_negative_overflow_is_error() {
 fn integer_hex_i64_min() {
     let node = parse("n: -0x8000000000000000").unwrap();
     let map = node.value.as_mapping().unwrap();
-    assert_eq!(map[&MapKey::String("n".into())].value, Value::Int(i64::MIN));
+    assert_eq!(map[&MapKey::String("n".into())].value, Value::Str("-0x8000000000000000".into()));
 }
 
 #[test]
 fn integer_octal_i64_min() {
     let node = parse("n: -0o1000000000000000000000").unwrap();
     let map = node.value.as_mapping().unwrap();
-    assert_eq!(map[&MapKey::String("n".into())].value, Value::Int(i64::MIN));
+    assert_eq!(map[&MapKey::String("n".into())].value, Value::Str("-0o1000000000000000000000".into()));
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn integer_binary_i64_min() {
     let node =
         parse("n: -0b1000000000000000000000000000000000000000000000000000000000000000").unwrap();
     let map = node.value.as_mapping().unwrap();
-    assert_eq!(map[&MapKey::String("n".into())].value, Value::Int(i64::MIN));
+    assert_eq!(map[&MapKey::String("n".into())].value, Value::Str("-0b1000000000000000000000000000000000000000000000000000000000000000".into()));
 }
 
 // ── Floats ───────────────────────────────────────────────────────

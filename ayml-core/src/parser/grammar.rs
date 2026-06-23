@@ -751,28 +751,9 @@ impl<'a> Parser<'a> {
             None => (s.strip_prefix('+').unwrap_or(s), false),
         };
 
-        let abs = if let Some(bin) = unsigned.strip_prefix("0b") {
-            match u64::from_str_radix(bin, 2) {
-                Ok(v) => v,
-                Err(_) if bin.chars().all(|c| c == '0' || c == '1') => return Err(()),
-                Err(_) => return Ok(None),
-            }
-        } else if let Some(oct) = unsigned.strip_prefix("0o") {
-            match u64::from_str_radix(oct, 8) {
-                Ok(v) => v,
-                Err(_) if oct.chars().all(|c| c.is_ascii_digit() && c < '8') => return Err(()),
-                Err(_) => return Ok(None),
-            }
-        } else if let Some(hex) = unsigned.strip_prefix("0x") {
-            match u64::from_str_radix(hex, 16) {
-                Ok(v) => v,
-                Err(_) if hex.chars().all(|c| c.is_ascii_hexdigit()) => return Err(()),
-                Err(_) => return Ok(None),
-            }
+        let abs = if unsigned.is_empty() || !unsigned.chars().all(|c| c.is_ascii_digit()) {
+            return Ok(None);
         } else {
-            if unsigned.is_empty() || !unsigned.chars().all(|c| c.is_ascii_digit()) {
-                return Ok(None);
-            }
             match unsigned.parse::<u64>() {
                 Ok(v) => v,
                 Err(_) => return Err(()),

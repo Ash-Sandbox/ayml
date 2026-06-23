@@ -155,9 +155,6 @@ An AYML decoder MUST support 64-bit signed integers.
 
 ```
 decimal: 12345
-binary: 0b10101010
-octal: 0o14
-hexadecimal: 0xC
 ```
 
 **Float**
@@ -514,17 +511,7 @@ ns-hex-digit ::=
   | [x61-x66]            # a-f
 ```
 
-An octal digit:
 
-```
-ns-oct-digit ::= [x30-x37]             # 0-7
-```
-
-A binary digit:
-
-```
-ns-bin-digit ::= '0' | '1'
-```
 
 ## Indicator Characters
 
@@ -786,9 +773,6 @@ An AYML decoder MUST support 64-bit signed integers.
 ```
 ns-integer ::=
     ( '-' | '+' )? ns-dec-digit+                    # Decimal
-  | ( '-' | '+' )? "0b" ns-bin-digit+               # Binary
-  | ( '-' | '+' )? "0o" ns-oct-digit+               # Octal
-  | ( '-' | '+' )? "0x" ns-hex-digit+               # Hexadecimal
 ```
 
 **Example:**
@@ -796,9 +780,6 @@ ns-integer ::=
 ```
 decimal: 12345
 negative: -9876
-binary: 0b10101010
-octal: 0o14
-hexadecimal: 0xC
 ```
 
 
