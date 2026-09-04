@@ -1,0 +1,39 @@
+# spaghetti configuration.
+# See https://github.com/Ash-Sandbox/spaghetti
+#
+# The 12 cycles in the baseline are all structural (recursive document tree,
+# serde's required visitor/accessor shapes, and recursive-descent grammar).
+# docs/cycles.md explains each one and why it stays.
+
+[index]
+# Command that produces a SCIP index. {output} is replaced with a temporary path.
+command = "rust-analyzer scip . --output {output}"
+# Reuse the cached index if no source file is newer than the cache.
+cache = false
+cache_path = ".spaghetti/index.scip"
+
+[analyze]
+levels = ["module", "type", "method"]
+# Symbol globs to include or exclude.
+include = []
+exclude = []
+# Document path globs to ignore before analysis.
+exclude_paths = ["**/tests/**"]
+
+[module]
+# Module glob patterns to collapse into a single node.
+collapse = []
+
+[type]
+# Type names to ignore along with their methods.
+ignore = []
+# Type names whose referencing edges are ignored.
+ignore_through = []
+# Generate dependency edges from trait implementations to trait definitions.
+trait_impl_edges = true
+
+[baseline]
+path = "spaghetti.baseline.json"
+# Fail if the baseline contains cycles that no longer exist, so that any cycle
+# genuinely removed is locked out and the count can only ratchet downward.
+fail_on_stale = true

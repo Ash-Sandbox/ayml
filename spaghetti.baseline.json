@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "generated_by": "spaghetti 0.1.0",
+  "cycles": [
+    {
+      "id": "f:312782ce48477381",
+      "level": "method",
+      "nodes": [
+        "cargo/ayml-core/parser/grammar/Parser#parse_flow_node().",
+        "cargo/ayml-core/parser/grammar/Parser#parse_flow_node_inner().",
+        "cargo/ayml-core/parser/grammar/Parser#parse_flow_sequence()."
+      ]
+    },
+    {
+      "id": "f:413176c4b65fecf0",
+      "level": "method",
+      "nodes": [
+        "cargo/ayml-core/parser/grammar/Parser#parse_flow_mapping().",
+        "cargo/ayml-core/parser/grammar/Parser#parse_flow_mapping_entry().",
+        "cargo/ayml-core/parser/grammar/Parser#parse_flow_node().",
+        "cargo/ayml-core/parser/grammar/Parser#parse_flow_node_inner()."
+      ]
+    },
+    {
+      "id": "f:babd212aa615be75",
+      "level": "method",
+      "nodes": [
+        "cargo/ayml-core/parser/grammar/Parser#parse_block_mapping().",
+        "cargo/ayml-core/parser/grammar/Parser#parse_mapping_value().",
+        "cargo/ayml-core/parser/grammar/Parser#parse_indented_value().",
+        "cargo/ayml-core/parser/grammar/Parser#parse_indented_value_inner().",
+        "cargo/ayml-core/parser/grammar/Parser#try_block_mapping()."
+      ]
+    },
+    {
+      "id": "f:f0ccec816a49d6c1",
+      "level": "method",
+      "nodes": [
+        "cargo/ayml-core/parser/grammar/Parser#parse_block_sequence().",
+        "cargo/ayml-core/parser/grammar/Parser#parse_seq_entry_value().",
+        "cargo/ayml-core/parser/grammar/Parser#try_compact_mapping().",
+        "cargo/ayml-core/parser/grammar/Parser#parse_mapping_value().",
+        "cargo/ayml-core/parser/grammar/Parser#parse_indented_value().",
+        "cargo/ayml-core/parser/grammar/Parser#parse_indented_value_inner().",
+        "cargo/ayml-core/parser/grammar/Parser#try_block_sequence()."
+      ]
+    },
+    {
+      "id": "t:2fe2d60952c2b755",
+      "level": "type",
+      "nodes": [
+        "cargo/ayml/de/CommentedAccess#",
+        "cargo/ayml/de/Deserializer#"
+      ]
+    },
+    {
+      "id": "t:5e054264a0f8c6ae",
+      "level": "type",
+      "nodes": [
+        "cargo/ayml/commented_value/CommentedValueKind#",
+        "cargo/ayml/commented_value/CommentedValueKindVisitor#"
+      ]
+    },
+    {
+      "id": "t:715f6743fc6cfcf7",
+      "level": "type",
+      "nodes": [
+        "cargo/ayml/commented/Commented#",
+        "cargo/ayml/commented_value/CommentedValueKind#"
+      ]
+    },
+    {
+      "id": "t:7c297cddb4b9aa6e",
+      "level": "type",
+      "nodes": [
+        "cargo/ayml/commented/Commented#",
+        "cargo/ayml/commented/CommentedVisitor#"
+      ]
+    },
+    {
+      "id": "t:857a9afbac87fd13",
+      "level": "type",
+      "nodes": [
+        "cargo/ayml/commented/Commented#",
+        "cargo/ayml/commented_value/CommentedValueKind#",
+        "cargo/ayml/commented_value/CommentedValue#"
+      ]
+    },
+    {
+      "id": "t:8da1df3be9afd813",
+      "level": "type",
+      "nodes": [
+        "cargo/ayml-core/value/Node#",
+        "cargo/ayml-core/value/Value#"
+      ]
+    },
+    {
+      "id": "t:90f6740ebc4739c6",
+      "level": "type",
+      "nodes": [
+        "cargo/ayml/value/Value#",
+        "cargo/ayml/value/ValueVisitor#"
+      ]
+    },
+    {
+      "id": "t:b9cac5fd27416ff3",
+      "level": "type",
+      "nodes": [
+        "cargo/ayml/commented_value/CommentedValue#",
+        "cargo/ayml/commented_value/CommentedValueKind#"
+      ]
+    }
+  ]
+}

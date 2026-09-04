@@ -1427,7 +1427,6 @@ impl<R: Read> MapAccess<'_, R> {
         }
         Ok(())
     }
-
 }
 
 impl<'de, R: Read> de::MapAccess<'de> for MapAccess<'_, R> {
@@ -1743,7 +1742,9 @@ where
             T::try_from(i).map_err(|e| Error::Message(format!("integer key out of range: {e}")))
         }
         Err(()) => Err(Error::Message(format!("integer key overflow: `{text}`"))),
-        Ok(None) => Err(Error::Message(format!("expected integer key, got `{text}`"))),
+        Ok(None) => Err(Error::Message(format!(
+            "expected integer key, got `{text}`"
+        ))),
     }
 }
 
