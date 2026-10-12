@@ -1,0 +1,862 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Policy",
+  "description": "Top-level policy structure.",
+  "type": "object",
+  "properties": {
+    "api": {
+      "description": "Native API access rules (e.g., Apple framework calls)",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ApiPolicy"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "dependencies": {
+      "description": "Policy dependencies (registry and local)",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Dependencies"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "environment": {
+      "description": "Environment variable rules",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/EnvironmentPolicy"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "exec": {
+      "description": "Process execution rules",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ExecPolicy"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "files": {
+      "description": "Filesystem access rules",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/FilesystemPolicy"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "io_devices": {
+      "description": "IOKit device access rules",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/IoDevicePolicy"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "mach": {
+      "description": "Mach IPC service access rules",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/MachPolicy"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "network": {
+      "description": "Network access rules",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/NetworkPolicy"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "publish": {
+      "description": "Publish metadata (only for publishable policies)",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/PublishMetadata"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schema_version": {
+      "description": "Policy schema version (currently must be 1)",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version"
+  ],
+  "definitions": {
+    "Action": {
+      "description": "Action to take for a matching rule.",
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ]
+    },
+    "ApiPolicy": {
+      "description": "Native API access policy.",
+      "type": "object",
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ApiRule"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rules"
+      ]
+    },
+    "ApiRule": {
+      "description": "A rule controlling native API access (e.g., Apple framework calls).",
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "Action to take when this rule matches. Defaults to `allow`.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Action"
+            }
+          ]
+        },
+        "class": {
+          "description": "Class name pattern (e.g. \"HKHealthStore\", \"HK*\"). If omitted, matches all classes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "framework": {
+          "description": "Framework name pattern (e.g. \"HealthKit\", \"EventKit\", \"*\").",
+          "type": "string"
+        },
+        "precedence": {
+          "description": "Manual precedence override (higher = evaluated first).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "selector": {
+          "description": "Selector pattern (e.g. \"alloc\", \"requestAuthorization*\"). If omitted, matches all selectors.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "framework"
+      ]
+    },
+    "ArgSelector": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "any"
+          ]
+        },
+        {
+          "type": "string",
+          "enum": [
+            "any_flag"
+          ]
+        },
+        {
+          "type": "string",
+          "enum": [
+            "any_option"
+          ]
+        },
+        {
+          "type": "string",
+          "enum": [
+            "any_positional"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "flag": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "flag"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "option": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "option"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "index": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "positional": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "positional"
+          ]
+        }
+      ]
+    },
+    "Dependencies": {
+      "description": "Policy dependencies: a map of dependency name → dependency spec.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/Dependency"
+      }
+    },
+    "Dependency": {
+      "description": "A single dependency: either a registry or local dependency.",
+      "anyOf": [
+        {
+          "description": "Short form: just a version string (e.g., `\"1.0\"`)",
+          "type": "string"
+        },
+        {
+          "description": "Expanded registry dep with version and optional custom registry",
+          "allOf": [
+            {
+              "$ref": "#/definitions/RegistryDep"
+            }
+          ]
+        },
+        {
+          "description": "Local dependency with a file path",
+          "allOf": [
+            {
+              "$ref": "#/definitions/LocalDep"
+            }
+          ]
+        }
+      ]
+    },
+    "Direction": {
+      "description": "Network traffic direction.",
+      "type": "string",
+      "enum": [
+        "inbound",
+        "outbound"
+      ]
+    },
+    "EnvironmentAllow": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "all"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "EnvironmentPolicy": {
+      "description": "Environment variable access policy.",
+      "type": "object",
+      "properties": {
+        "rules": {
+          "$ref": "#/definitions/EnvironmentRules"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rules"
+      ]
+    },
+    "EnvironmentRules": {
+      "description": "Environment variable rules.",
+      "type": "object",
+      "properties": {
+        "allow": {
+          "description": "Environment variables to pass through to the sandbox.\nCan be a list of variable names or \"all\" to pass all variables.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EnvironmentAllow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deny": {
+          "description": "Environment variables to deny access to the sandbox.\nOnly valid when `allow` is set to \"all\".",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "set": {
+          "description": "Environment variables to inject into the sandbox.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExecPolicy": {
+      "description": "Process execution policy.",
+      "type": "object",
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExecRule"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rules"
+      ]
+    },
+    "ExecRule": {
+      "description": "A rule controlling process execution.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "Action to take when this rule matches. Defaults to `allow`.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Action"
+            }
+          ]
+        },
+        "args": {
+          "description": "Argument selectors. Rule matches if ANY selector matches (OR logic).\nIf omitted or empty, arguments are not part of the rule's selector.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/ArgSelector"
+          }
+        },
+        "path": {
+          "description": "Process path pattern (e.g., \"/usr/bin/**\" or \"**/python3\").",
+          "type": "string"
+        },
+        "precedence": {
+          "description": "Manual precedence override (higher = evaluated first)",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "subcommand": {
+          "description": "Subcommand literal(s) to match.\nMulti-word subcommands (e.g., \"workflow run\") match sequential tokens.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ]
+    },
+    "FileOperation": {
+      "description": "File operations that can be controlled.",
+      "type": "string",
+      "enum": [
+        "read",
+        "write",
+        "create",
+        "delete",
+        "rename",
+        "metadata",
+        "create_dir"
+      ]
+    },
+    "FileOperations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/FileOperation"
+      }
+    },
+    "FilesystemPolicy": {
+      "description": "Filesystem access policy.",
+      "type": "object",
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/FilesystemRule"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rules"
+      ]
+    },
+    "FilesystemRule": {
+      "description": "A rule controlling filesystem access.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "Action to take when this rule matches. Defaults to `allow`.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Action"
+            }
+          ]
+        },
+        "operations": {
+          "description": "Operations this rule applies to. Defaults to all operations.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/FileOperations"
+            }
+          ]
+        },
+        "path": {
+          "description": "Path pattern with support for $CWD, $HOME, $ASH_SESSION_ID, ~, ., *, and **)",
+          "type": "string"
+        },
+        "precedence": {
+          "description": "Manual precedence override (higher = evaluated first)",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ]
+    },
+    "HostPattern": {
+      "description": "hostname, IP address, or CIDR pattern",
+      "type": "string"
+    },
+    "HttpMethod": {
+      "description": "HTTP method",
+      "type": "string",
+      "enum": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE",
+        "PATCH",
+        "HEAD",
+        "OPTIONS"
+      ]
+    },
+    "HttpMethods": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/HttpMethod"
+      }
+    },
+    "IoDevicePolicy": {
+      "description": "IOKit device access policy.",
+      "type": "object",
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/IoDeviceRule"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rules"
+      ]
+    },
+    "IoDeviceRule": {
+      "description": "A rule controlling IOKit device access.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "Action to take when this rule matches. Defaults to `allow`.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Action"
+            }
+          ]
+        },
+        "class": {
+          "description": "IOKit user client class pattern (supports wildcards like \"AppleGPU*\", \"*USB*\").",
+          "type": "string"
+        },
+        "precedence": {
+          "description": "Manual precedence override (higher = evaluated first)",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "class"
+      ]
+    },
+    "LocalDep": {
+      "description": "A local file-path dependency.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Relative path to the local policy file",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ]
+    },
+    "MachOperation": {
+      "description": "Mach IPC operations that can be controlled.",
+      "oneOf": [
+        {
+          "description": "`bootstrap_look_up()` — the standard XPC client path.\nCompiles to seatbelt `mach-lookup`.",
+          "type": "string",
+          "const": "lookup"
+        },
+        {
+          "description": "Publishing a Mach service.\nCompiles to seatbelt `mach-register`.",
+          "type": "string",
+          "const": "register"
+        }
+      ]
+    },
+    "MachOperations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/MachOperation"
+      }
+    },
+    "MachPolicy": {
+      "description": "Mach IPC access policy.",
+      "type": "object",
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/MachRule"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rules"
+      ]
+    },
+    "MachRule": {
+      "description": "A rule controlling Mach IPC service access.\n\nMach IPC is a macOS message-passing IPC system. Allowing a service grants\nthe agent the ability to call into it (or, with `register`, to publish a\nservice of that name).",
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "Action to take when this rule matches. Defaults to `allow`.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Action"
+            }
+          ]
+        },
+        "operations": {
+          "description": "Operations covered by this rule. Defaults to `[lookup]`.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/MachOperations"
+            }
+          ]
+        },
+        "precedence": {
+          "description": "Manual precedence override (higher = evaluated first).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "service": {
+          "description": "Mach service name. Matched against `bootstrap_look_up()` targets and\nservice-publication names. Supports a single trailing wildcard\n(e.g. `\"com.apple.coresymbolicationd\"`, `\"com.example.*\"`). Bare `\"*\"`,\nleading wildcards, and embedded wildcards are rejected at parse time\nto prevent allowlist bypass.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "service"
+      ]
+    },
+    "NetworkPolicy": {
+      "description": "Network access policy.",
+      "type": "object",
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/NetworkRule"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rules"
+      ]
+    },
+    "NetworkRule": {
+      "description": "A rule controlling network access.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "Action to take when this rule matches. Defaults to `allow`.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Action"
+            }
+          ]
+        },
+        "direction": {
+          "description": "Traffic direction (inbound, outbound, or both if omitted).",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Direction"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "host": {
+          "description": "Host pattern (supports wildcards like *.example.com)",
+          "allOf": [
+            {
+              "$ref": "#/definitions/HostPattern"
+            }
+          ]
+        },
+        "methods": {
+          "description": "HTTP methods this rule applies to. Defaults to all methods.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/HttpMethods"
+            }
+          ]
+        },
+        "paths": {
+          "description": "URL path patterns this rule applies to. Defaults to any path.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "ports": {
+          "description": "Ports this rule applies to. Defaults to `all`.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Ports"
+            }
+          ]
+        },
+        "precedence": {
+          "description": "Manual precedence override (higher = evaluated first)",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "transports": {
+          "description": "Transport protocol. Defaults to `all`.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Transport"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "host"
+      ]
+    },
+    "Ports": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "all"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0
+          }
+        }
+      ]
+    },
+    "PublishMetadata": {
+      "description": "Metadata for publishing a policy to the registry.",
+      "type": "object",
+      "properties": {
+        "authors": {
+          "description": "List of authors",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "description": {
+          "description": "Human-readable description",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "homepage": {
+          "description": "Homepage URL",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "license": {
+          "description": "SPDX license identifier",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Unique identifier (lowercase, hyphens, optional namespace: author/name)",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+(/[a-z0-9-]+)?$"
+        },
+        "repository": {
+          "description": "Repository URL",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "description": "SemVer version",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "RegistryDep": {
+      "description": "A registry dependency with an explicit version field.",
+      "type": "object",
+      "properties": {
+        "registry": {
+          "description": "Optional custom registry URL",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "description": "SemVer version requirement (e.g., `\"^1.0\"`)",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "version"
+      ]
+    },
+    "Transport": {
+      "description": "Transport protocol for network rules.",
+      "type": "string",
+      "enum": [
+        "tcp",
+        "udp",
+        "all"
+      ]
+    }
+  }
+}

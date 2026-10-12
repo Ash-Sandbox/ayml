@@ -3,22 +3,18 @@
 > [!NOTE]
 > Status: Beta Software, Handle With Care
 
-Simplified YAML variant built for [Ash](https://ashell.dev)
+Simplified YAML variant.
 
-AYML is a software configuration language that looks like YAML and acts like JSON.
-It is meant to be a human-friendly, cross language, Unicode based software
-configuration language. Unlike YAML, it is not designed as a fully featured
-data serialization framework. Most YAML features are omitted by design to avoid
-unintentional or malicious misuse.
+AYML is a software configuration language that looks like YAML and acts like JSON. It is meant to be a human-friendly, cross language, Unicode based software configuration language. Unlike YAML, it is not designed as a fully featured data serialization framework. Most YAML features are omitted by design to avoid unintentional or malicious misuse.
 
 ## Example
 
-It look a lot like YAML:
+It looks a lot like YAML:
 
 ```ayml
 # yaml-language-server: $schema=https://hub.ashell.dev/schemas/policy/v1.json
 schema_version: 1
-dependencies: 
+dependencies:
   # default macOS permissions
   ash/base-macos: ^0
   # allow git command line tools
@@ -39,36 +35,62 @@ network:
 
 ## Goals
 
-AYML's design goals are, in decreasing priority:
+Design goals, starting with most important:
 
-1. it is easy to read and understand
-2. it is easy to write correctly (and hard to write incorrectly)
+1. it is easy to read and understand structured data
+2. it is easy to write correctly, and hard to write incorrectly
 3. it deserializes naturally into strongly typed data structures
 4. it deserializes naturally into the core types of dynamically typed languages
 5. it incorporates comments as a formal part of the document structure
 
 ## Omitted
 
-* YES/NO for booleans
-* tags
-* structures (anchors, aliases, `---` separators)
-* unordered sets
-* duplicate keys
-* JSON compatibility quirks
-* empty nodes
-* `?` indicators
-* directives
-* document prefixes
-* multi-document files
+- YES/NO for booleans
+- tags
+- structures (anchors, aliases, `---` separators)
+- unordered sets
+- duplicate keys
+- JSON compatibility quirks
+- empty nodes
+- `?` indicators
+- directives
+- document prefixes
+- multi-document files
+- single-quoted strings and block scalars
+- non-string keys
+
+## Comments
+
+Each comment belongs to one node:
+
+- comment lines above a node belong to that node
+- a comment at the end of a line belongs to the node that ends on that line
+- comment lines after the last entry of a collection belong to that collection
+
+Comments can be parsed and re-emitted alongside their nodes.
+To support comments in serde parsing, wrap a field in `ayml::Commented<T>`.
 
 ## Crates
 
-* `ayml` contains a serde Serializer and Deserializer.
-* `ayml-core` contains a standalone parser and emitter to test spec conformance.
+- `ayml-core` is the reference parser and emitter
+- `ayml` provides serde support.
+- `ayml-lsp` is a language server with schema validation and hover.
+- `ayml-testgen` holds shared property test generators.
 
 ## Testing
 
 AYML is tested with unit tests, integration tests, property tests, and fuzz tests. All but fuzz tests run with `cargo t`.
+
+Property tests check, among other things, that:
+
+- `parse(emit(tree))` emits canonical form and is idempotent
+- documents rendered with random styles are re-parsed correctly
+- JSON written by `serde_json` is parsed correctly as AYML
+- typed values and comments are parsed and re-emitted correctly
+- streaming and non-streaming (de)serialization produce identical output
+- invalid input never causes a panic
+
+Set `PROPTEST_CASES` to run more cases, for example `PROPTEST_CASES=100000 cargo test --release`.
 
 #### Fuzzing
 
@@ -79,11 +101,20 @@ rustup toolchain install nightly
 cargo install cargo-fuzz
 cd ayml/fuzz
 
-# Run the deserialize fuzzer
+# Parse arbitrary bytes into `ayml::Value`
 cargo +nightly fuzz run fuzz_deserialize
 
-# Run the roundtrip fuzzer
+# Parse, serialize, and parse again with serde
 cargo +nightly fuzz run fuzz_roundtrip
+
+# Parse with ayml-core and check that round trips produce identical output
+cargo +nightly fuzz run fuzz_core_roundtrip
+
+# Deserialize arbitrary bytes into a struct with many field types
+cargo +nightly fuzz run fuzz_typed
+
+# Check that streaming and tree-based deserialization produce identical output
+cargo +nightly fuzz run fuzz_streaming_vs_tree
 
 # Limit to 5 minutes
 cargo +nightly fuzz run fuzz_deserialize -- -max_total_time=300
@@ -105,20 +136,19 @@ cargo bench
 cargo bench --bench serde_comparison
 ```
 
-All tests performed on a Macbook Pro M4 Max.
-Deserialization benchmarks are for `typed` variations (`value` variations are roughly 60% as fast). 
+All tests performed on a Macbook Pro M4 Max. Deserialization benchmarks use typed variations. Deserialization into an untyped value is roughly half as fast.
 
-|  Benchmark  | Deserialize | Serialize |
-|-------------|-------------|-----------|
-| flat        | 106 MiB/s   | 364 MiB/s |
-| nested      | 106 MiB/s   | 434 MiB/s |
-| seq_of_maps | 101 MiB/s   | 483 MiB/s |
-| strings     | 222 MiB/s   | 602 MiB/s |
-| large_50    | 104 MiB/s   | 565 MiB/s |
+| Benchmark   | Deserialize | Serialize |
+| ----------- | ----------- | --------- |
+| flat        | 211 MiB/s   | 374 MiB/s |
+| nested      | 211 MiB/s   | 437 MiB/s |
+| seq_of_maps | 232 MiB/s   | 477 MiB/s |
+| strings     | 445 MiB/s   | 824 MiB/s |
+| large_50    | 262 MiB/s   | 535 MiB/s |
 
-Based on comparative benchmarks, if you are looking for maximal performance then you should consider `serde_json`. It deserializes 6-7x faster and serializes 2-3x faster than AYML. AYML performance is adequate for typical config use cases, where serialization performance is not a bottleneck.
+If you need max performance, consider `serde_json`. Comparative benchmarks show it is about 2-3x faster than AYML.
 
 ## Acknowledgements
 
-* The AYML spec doc is derived in large part from the [YAML specification](https://yaml.org/spec).
-* The AYML serde implementation is heavily influenced by [serde_json](https://github.com/serde-rs/json)
+- The AYML specification is derived mainly from the [YAML specification](https://yaml.org/spec).
+- The AYML serde implementation is heavily influenced by [serde_json](https://github.com/serde-rs/json)

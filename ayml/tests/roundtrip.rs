@@ -1,538 +1,199 @@
-//! Roundtrip tests: serialize a value to AYML, then deserialize it back
-//! and verify equality. Covers all serde data model types.
+//! Round trips: serialize then deserialize, and parse then re-serialize.
 
-use ayml::{from_str, to_string};
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+#![allow(clippy::items_after_statements)]
+
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 
+use ayml::Value;
+use serde::{Deserialize, Serialize};
+
+#[track_caller]
 fn roundtrip<T: Serialize + for<'de> Deserialize<'de> + Debug + PartialEq>(value: &T) {
-    let s = to_string(value).unwrap_or_else(|e| panic!("serialize failed for {value:?}: {e}"));
-    let back: T =
-        from_str(&s).unwrap_or_else(|e| panic!("deserialize failed for {value:?}: {e}\nayml: {s}"));
-    assert_eq!(&back, value, "roundtrip mismatch for ayml:\n{s}");
+    let text = ayml::to_string(value).unwrap();
+    let back: T = ayml::from_str(&text).unwrap_or_else(|e| panic!("{e}\n--- text ---\n{text}"));
+    assert_eq!(&back, value, "\n--- text ---\n{text}");
 }
 
-// ── Null / Unit ─────────────────────────────────────────────────
-
 #[test]
-fn roundtrip_null() {
+fn scalars() {
     roundtrip(&());
-}
-
-#[test]
-fn roundtrip_unit_struct() {
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct Marker;
-    roundtrip(&Marker);
-}
-
-// ── Booleans ────────────────────────────────────────────────────
-
-#[test]
-fn roundtrip_bool() {
     roundtrip(&true);
-    roundtrip(&false);
-}
-
-// ── Integers ────────────────────────────────────────────────────
-
-#[test]
-fn roundtrip_i8() {
-    roundtrip(&0i8);
+    for v in [i64::MIN, -1, 0, 1, i64::MAX] {
+        roundtrip(&v);
+    }
     roundtrip(&i8::MIN);
-    roundtrip(&i8::MAX);
-}
-
-#[test]
-fn roundtrip_i16() {
-    roundtrip(&0i16);
-    roundtrip(&i16::MIN);
-    roundtrip(&i16::MAX);
-}
-
-#[test]
-fn roundtrip_i32() {
-    roundtrip(&0i32);
-    roundtrip(&i32::MIN);
-    roundtrip(&i32::MAX);
-    roundtrip(&42i32);
-    roundtrip(&-17i32);
-}
-
-#[test]
-fn roundtrip_i64() {
-    roundtrip(&0i64);
-    roundtrip(&i64::MIN);
-    roundtrip(&i64::MAX);
-}
-
-#[test]
-fn roundtrip_u8() {
-    roundtrip(&0u8);
-    roundtrip(&u8::MAX);
-}
-
-#[test]
-fn roundtrip_u16() {
-    roundtrip(&0u16);
     roundtrip(&u16::MAX);
-}
-
-#[test]
-fn roundtrip_u32() {
-    roundtrip(&0u32);
     roundtrip(&u32::MAX);
+    roundtrip(&(i64::MAX as u64));
+    roundtrip(&i128::from(i64::MIN));
+    for v in [
+        0.0,
+        -0.0,
+        0.1,
+        1.0,
+        1e300,
+        5e-324,
+        f64::MAX,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    ] {
+        roundtrip(&v);
+    }
+    for v in [0.1f32, f32::MAX, f32::MIN_POSITIVE, 1.0e-45] {
+        roundtrip(&v);
+    }
+    for c in ['a', '"', '\n', '\0', '\u{FEFF}', '😀'] {
+        roundtrip(&c);
+    }
 }
 
 #[test]
-fn roundtrip_u64() {
-    roundtrip(&0u64);
-    roundtrip(&u64::MAX);
-}
-
-// ── Floats ──────────────────────────────────────────────────────
-
-#[test]
-fn roundtrip_f64() {
-    roundtrip(&0.0f64);
-    roundtrip(&3.25f64);
-    roundtrip(&-0.5f64);
-    roundtrip(&1.0f64);
-    roundtrip(&f64::MIN);
-    roundtrip(&f64::MAX);
-    roundtrip(&f64::EPSILON);
-    roundtrip(&1e10f64);
-    roundtrip(&1.23015e3f64);
-}
-
-#[test]
-fn roundtrip_f64_inf() {
-    roundtrip(&f64::INFINITY);
-    roundtrip(&f64::NEG_INFINITY);
-}
-
-#[test]
-fn roundtrip_f64_nan() {
-    let s = to_string(&f64::NAN).unwrap();
-    let back: f64 = from_str(&s).unwrap();
-    assert!(back.is_nan());
-}
-
-#[test]
-fn roundtrip_f64_precision() {
-    // Values known to be tricky for float roundtripping
-    roundtrip(&51.24817837550540_4f64);
-    roundtrip(&-93.3113703768803_3f64);
-    roundtrip(&2.0030397744267762e-253f64);
-    roundtrip(&7.101215824554616e260f64);
-}
-
-#[test]
-fn roundtrip_f32() {
-    roundtrip(&0.0f32);
-    roundtrip(&3.25f32);
-    roundtrip(&f32::INFINITY);
-    roundtrip(&f32::NEG_INFINITY);
+fn strings() {
+    for s in [
+        "",
+        "null",
+        "true",
+        "inf",
+        "-inf",
+        "nan",
+        "42",
+        "-7",
+        "3.25",
+        "0x10",
+        "1e5",
+        "007",
+        "yes",
+        "- item",
+        "-",
+        ":",
+        "a: b",
+        "a #b",
+        "a#b",
+        "[x]",
+        "{x}",
+        "'x'",
+        "\"x\"",
+        " x",
+        "x ",
+        "\t",
+        "\u{A0}",
+        "\u{FEFF}x",
+        "\u{2028}",
+        "\u{FFFE}",
+        "\u{7F}",
+        "a\nb",
+        "a\n",
+        "\n",
+        "\n\n",
+        "a\r\nb",
+        "a\n\"\"\"\nb",
+        "a\n\\n",
+        "  indented\n    more",
+        "trailing \nspace\t",
+    ] {
+        roundtrip(&s.to_string());
+    }
 }
 
 #[test]
-fn roundtrip_f32_nan() {
-    let s = to_string(&f32::NAN).unwrap();
-    let back: f32 = from_str(&s).unwrap();
-    assert!(back.is_nan());
-}
-
-// ── Strings ─────────────────────────────────────────────────────
-
-#[test]
-fn roundtrip_string_simple() {
-    roundtrip(&String::from("hello"));
-    roundtrip(&String::from("hello world"));
-    roundtrip(&String::from("https://example.com/path"));
-}
-
-#[test]
-fn roundtrip_string_empty() {
-    roundtrip(&String::new());
-}
-
-#[test]
-fn roundtrip_string_reserved_words() {
-    // These would be parsed as non-string types without quoting
-    roundtrip(&String::from("null"));
-    roundtrip(&String::from("true"));
-    roundtrip(&String::from("false"));
-    roundtrip(&String::from("inf"));
-    roundtrip(&String::from("+inf"));
-    roundtrip(&String::from("-inf"));
-    roundtrip(&String::from("nan"));
-}
-
-#[test]
-fn roundtrip_string_numeric_looking() {
-    roundtrip(&String::from("42"));
-    roundtrip(&String::from("-17"));
-    roundtrip(&String::from("3.25"));
-    roundtrip(&String::from("1e10"));
-    roundtrip(&String::from("0xFF"));
-    roundtrip(&String::from("0b1010"));
-    roundtrip(&String::from("0o77"));
-}
-
-#[test]
-fn roundtrip_string_escapes() {
-    roundtrip(&String::from("line\nbreak"));
-    roundtrip(&String::from("tab\there"));
-    roundtrip(&String::from("carriage\rreturn"));
-    roundtrip(&String::from("null\0byte"));
-    roundtrip(&String::from("bell\x07ring"));
-    roundtrip(&String::from("backspace\x08char"));
-    roundtrip(&String::from("escape\x1Bseq"));
-    roundtrip(&String::from("quote\"inside"));
-    roundtrip(&String::from("back\\slash"));
-}
-
-#[test]
-fn roundtrip_string_unicode() {
-    roundtrip(&String::from("Σ")); // U+03A3
-    roundtrip(&String::from("☺")); // U+263A
-    roundtrip(&String::from("🎉")); // U+1F389
-    roundtrip(&String::from("日本語"));
-    roundtrip(&String::from("Ñoño"));
-}
-
-#[test]
-fn roundtrip_string_indicators() {
-    roundtrip(&String::from("- dash start"));
-    roundtrip(&String::from(": colon start"));
-    roundtrip(&String::from("[bracket"));
-    roundtrip(&String::from("{brace"));
-    roundtrip(&String::from("#hash"));
-    roundtrip(&String::from("key: value"));
-    roundtrip(&String::from("value #comment"));
-    roundtrip(&String::from(" leading space"));
-    roundtrip(&String::from("trailing space "));
-}
-
-// ── Chars ───────────────────────────────────────────────────────
-
-#[test]
-fn roundtrip_char() {
-    roundtrip(&'a');
-    roundtrip(&'Z');
-    roundtrip(&'0');
-    roundtrip(&'Σ');
-    roundtrip(&'☺');
-}
-
-// ── Options ─────────────────────────────────────────────────────
-
-#[test]
-fn roundtrip_option_none() {
+fn options_and_collections() {
     roundtrip(&None::<i32>);
-    roundtrip(&None::<String>);
-}
-
-#[test]
-fn roundtrip_option_some() {
-    roundtrip(&Some(42i32));
-    roundtrip(&Some(String::from("hello")));
-    roundtrip(&Some(true));
-    roundtrip(&Some(3.25f64));
-}
-
-// ── Sequences ───────────────────────────────────────────────────
-
-#[test]
-fn roundtrip_vec_empty() {
+    roundtrip(&Some("x".to_string()));
+    roundtrip(&vec![Some(1), None, Some(3)]);
     roundtrip(&Vec::<i32>::new());
-}
-
-#[test]
-fn roundtrip_vec_integers() {
-    roundtrip(&vec![1, 2, 3]);
-    roundtrip(&vec![-1, 0, 1]);
-    roundtrip(&vec![i64::MIN, 0, i64::MAX]);
-}
-
-#[test]
-fn roundtrip_vec_strings() {
-    roundtrip(&vec![String::from("hello"), String::from("world")]);
-}
-
-#[test]
-fn roundtrip_vec_bools() {
-    roundtrip(&vec![true, false, true]);
-}
-
-#[test]
-fn roundtrip_vec_nested() {
-    roundtrip(&vec![vec![1, 2], vec![3, 4]]);
-    roundtrip(&vec![vec![vec![1]]]);
-}
-
-// ── Tuples ──────────────────────────────────────────────────────
-
-#[test]
-fn roundtrip_tuple2() {
-    roundtrip(&(42i32, String::from("hello")));
-}
-
-#[test]
-fn roundtrip_tuple3() {
-    roundtrip(&(1i32, 2.0f64, true));
-}
-
-// ── Maps ────────────────────────────────────────────────────────
-
-#[test]
-fn roundtrip_map_empty() {
+    roundtrip(&vec![vec![1, 2], vec![], vec![3]]);
+    roundtrip(&vec![vec![vec!["deep".to_string()]]]);
+    roundtrip(&(1, "two".to_string(), 3.0));
     roundtrip(&BTreeMap::<String, i32>::new());
+    roundtrip(&BTreeMap::from([
+        (String::new(), 1),
+        ("true".to_string(), 2),
+        ("a: b".to_string(), 3),
+    ]));
+    roundtrip(&BTreeMap::from([
+        (1u32, "a".to_string()),
+        (2, "b".to_string()),
+    ]));
+    roundtrip(&BTreeMap::from([(-5i64, vec![1]), (7, vec![])]));
+    roundtrip(&HashMap::from([(true, 1), (false, 2)]));
 }
 
 #[test]
-fn roundtrip_map_string_keys() {
-    let mut m = BTreeMap::new();
-    m.insert(String::from("a"), 1);
-    m.insert(String::from("b"), 2);
-    m.insert(String::from("c"), 3);
-    roundtrip(&m);
-}
-
-#[test]
-fn roundtrip_map_nested() {
-    let mut inner = BTreeMap::new();
-    inner.insert(String::from("x"), 10);
-    let mut outer = BTreeMap::new();
-    outer.insert(String::from("inner"), inner);
-    roundtrip(&outer);
-}
-
-// ── Structs ─────────────────────────────────────────────────────
-
-#[test]
-fn roundtrip_struct_simple() {
+fn structs_and_enums() {
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct Config {
-        name: String,
-        port: u16,
-        debug: bool,
+    struct Unit;
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    struct Newtype(String);
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    enum E {
+        A,
+        B(i32),
+        C(i32, String),
+        D { x: Option<f64>, y: Vec<E> },
     }
-    roundtrip(&Config {
-        name: "myapp".into(),
-        port: 8080,
-        debug: false,
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    struct S {
+        unit: Unit,
+        newtype: Newtype,
+        enums: Vec<E>,
+        nested: Option<Box<S>>,
+    }
+    roundtrip(&S {
+        unit: Unit,
+        newtype: Newtype("multi\nline".into()),
+        enums: vec![
+            E::A,
+            E::B(-1),
+            E::C(2, "x".into()),
+            E::D {
+                x: None,
+                y: vec![
+                    E::A,
+                    E::D {
+                        x: Some(1.5),
+                        y: vec![],
+                    },
+                ],
+            },
+        ],
+        nested: Some(Box::new(S {
+            unit: Unit,
+            newtype: Newtype(String::new()),
+            enums: vec![],
+            nested: None,
+        })),
     });
 }
 
 #[test]
-fn roundtrip_struct_nested() {
+fn spec_invoice() {
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct Outer {
-        inner: Inner,
-    }
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct Inner {
-        value: i32,
-    }
-    roundtrip(&Outer {
-        inner: Inner { value: 42 },
-    });
-}
-
-#[test]
-fn roundtrip_struct_deeply_nested() {
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct A {
-        b: B,
-    }
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct B {
-        c: C,
-    }
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct C {
-        value: i32,
-    }
-    roundtrip(&A {
-        b: B { c: C { value: 99 } },
-    });
-}
-
-#[test]
-fn roundtrip_struct_with_option() {
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct Config {
-        name: String,
-        label: Option<String>,
-    }
-    roundtrip(&Config {
-        name: "app".into(),
-        label: None,
-    });
-    roundtrip(&Config {
-        name: "app".into(),
-        label: Some("prod".into()),
-    });
-}
-
-#[test]
-fn roundtrip_struct_with_vec() {
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct Config {
-        items: Vec<String>,
-    }
-    roundtrip(&Config {
-        items: vec!["a".into(), "b".into()],
-    });
-    roundtrip(&Config { items: vec![] });
-}
-
-#[test]
-fn roundtrip_struct_with_map() {
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct Config {
-        tags: BTreeMap<String, String>,
-    }
-    let mut tags = BTreeMap::new();
-    tags.insert("env".into(), "prod".into());
-    tags.insert("region".into(), "us".into());
-    roundtrip(&Config { tags });
-    roundtrip(&Config {
-        tags: BTreeMap::new(),
-    });
-}
-
-#[test]
-fn roundtrip_vec_of_structs() {
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct Item {
-        name: String,
-        qty: u32,
-    }
-    roundtrip(&vec![
-        Item {
-            name: "Widget".into(),
-            qty: 5,
-        },
-        Item {
-            name: "Gadget".into(),
-            qty: 3,
-        },
-    ]);
-}
-
-#[test]
-fn roundtrip_newtype_struct() {
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct Meters(f64);
-    roundtrip(&Meters(3.5));
-    roundtrip(&Meters(0.0));
-    roundtrip(&Meters(-1.0));
-}
-
-// ── Enums ───────────────────────────────────────────────────────
-
-#[test]
-fn roundtrip_enum_unit() {
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    enum Color {
-        Red,
-        Green,
-        Blue,
-    }
-    roundtrip(&Color::Red);
-    roundtrip(&Color::Green);
-    roundtrip(&Color::Blue);
-}
-
-#[test]
-fn roundtrip_enum_newtype() {
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    enum Value {
-        Int(i64),
-        Float(f64),
-        Str(String),
-    }
-    roundtrip(&Value::Int(42));
-    roundtrip(&Value::Float(3.25));
-    roundtrip(&Value::Str("hello".into()));
-}
-
-#[test]
-fn roundtrip_enum_tuple() {
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    enum Cmd {
-        Move(i32, i32),
-        Scale(f64, f64, f64),
-    }
-    roundtrip(&Cmd::Move(10, 20));
-    roundtrip(&Cmd::Scale(1.0, 2.0, 3.0));
-}
-
-#[test]
-fn roundtrip_enum_struct() {
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    enum Shape {
-        Circle { radius: f64 },
-        Rect { w: u32, h: u32 },
-    }
-    roundtrip(&Shape::Circle { radius: 5.0 });
-    roundtrip(&Shape::Rect { w: 10, h: 20 });
-}
-
-#[test]
-fn roundtrip_enum_in_vec() {
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    enum Color {
-        Red,
-        Green,
-        Blue,
-    }
-    roundtrip(&vec![Color::Red, Color::Green, Color::Blue]);
-}
-
-#[test]
-fn roundtrip_enum_in_struct() {
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    #[allow(dead_code)]
-    enum Status {
-        Active,
-        Inactive,
-    }
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct User {
-        name: String,
-        status: Status,
-    }
-    roundtrip(&User {
-        name: "Alice".into(),
-        status: Status::Active,
-    });
-}
-
-// ── Complex / spec-inspired examples ────────────────────────────
-
-#[test]
-fn roundtrip_spec_invoice() {
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    #[allow(clippy::struct_field_names)]
     struct Invoice {
         invoice: u32,
         date: String,
         #[serde(rename = "bill-to")]
-        bill_to: BillTo,
+        bill_to: Person,
         #[serde(rename = "ship-to")]
-        ship_to: Option<String>,
+        ship_to: Option<Person>,
         product: Vec<Product>,
         tax: f64,
         total: f64,
         comments: String,
     }
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct BillTo {
+    struct Person {
         given: String,
         family: String,
+        address: Address,
+    }
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    struct Address {
+        lines: String,
+        city: String,
+        state: String,
+        postal: u32,
     }
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct Product {
@@ -541,43 +202,55 @@ fn roundtrip_spec_invoice() {
         description: String,
         price: f64,
     }
-    roundtrip(&Invoice {
-        invoice: 34843,
-        date: "2001-01-23".into(),
-        bill_to: BillTo {
-            given: "Chris".into(),
-            family: "Dumars".into(),
-        },
-        ship_to: None,
-        product: vec![
-            Product {
-                sku: "BL394D".into(),
-                quantity: 4,
-                description: "Basketball".into(),
-                price: 450.0,
-            },
-            Product {
-                sku: "BL4438H".into(),
-                quantity: 1,
-                description: "Super Hoop".into(),
-                price: 2392.0,
-            },
-        ],
-        tax: 251.42,
-        total: 4443.42,
-        comments: "Late afternoon is best.".into(),
-    });
+    let input = r#"invoice: 34843
+date: 2001-01-23
+bill-to:
+  given: Chris
+  family: Dumars
+  address:
+    lines: """
+      458 Walkman Dr.
+      Suite #292
+      """
+    city    : Royal Oak
+    state   : MI
+    postal  : 48046
+ship-to: null
+product:
+  - sku         : BL394D
+    quantity    : 4
+    description : Basketball
+    price       : 450.00
+  - sku         : BL4438H
+    quantity    : 1
+    description : Super Hoop
+    price       : 2392.00
+tax  : 251.42
+total: 4443.42
+comments: """
+  Late afternoon is best.
+  Backup contact is Nancy
+  Billsmer @ 338-4338.
+  """
+"#;
+    let invoice: Invoice = ayml::from_str(input).unwrap();
+    assert_eq!(invoice.bill_to.address.lines, "458 Walkman Dr.\nSuite #292");
+    assert_eq!(invoice.bill_to.address.postal, 48046);
+    assert!((invoice.product[1].price - 2392.0).abs() < f64::EPSILON);
+    assert!(invoice.ship_to.is_none());
+    assert!(invoice.comments.ends_with("338-4338."));
+    roundtrip(&invoice);
 }
 
 #[test]
-fn roundtrip_spec_log() {
+fn spec_log_file() {
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    #[allow(non_snake_case)]
+    #[serde(rename_all = "PascalCase")]
     struct Log {
-        Date: String,
-        User: String,
-        Fatal: String,
-        Stack: Vec<Frame>,
+        date: String,
+        user: String,
+        fatal: String,
+        stack: Vec<Frame>,
     }
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct Frame {
@@ -585,51 +258,84 @@ fn roundtrip_spec_log() {
         line: u32,
         code: String,
     }
-    roundtrip(&Log {
-        Date: "2001-11-23T15:03:17-5:00".into(),
-        User: "ed".into(),
-        Fatal: "Unknown variable \"bar\"".into(),
-        Stack: vec![
-            Frame {
-                file: "TopClass.py".into(),
-                line: 23,
-                code: "x = MoreObject(\"345\\n\")".into(),
-            },
-            Frame {
-                file: "MoreClass.py".into(),
-                line: 58,
-                code: "foo = bar".into(),
-            },
-        ],
-    });
+    let input = r#"Date: 2001-11-23T15:03:17-5:00
+User: ed
+Fatal: Unknown variable "bar"
+Stack:
+  - file: TopClass.py
+    line: 23
+    code: """
+      x = MoreObject("345\n")
+      """
+  - file: MoreClass.py
+    line: 58
+    code: """
+      foo = bar
+      """
+"#;
+    let log: Log = ayml::from_str(input).unwrap();
+    assert_eq!(log.date, "2001-11-23T15:03:17-5:00");
+    assert_eq!(log.fatal, "Unknown variable \"bar\"");
+    assert_eq!(log.stack[0].code, "x = MoreObject(\"345\n\")");
+    roundtrip(&log);
 }
 
 #[test]
-fn roundtrip_mixed_nesting() {
+fn value_reserialization_is_canonical() {
+    let input = "\
+key:    value
+list: [1,  2,
+  3]
+nested: {a: {b: \"c\"}}
+seq:
+- x
+- - y
+";
+    let v: Value = ayml::from_str(input).unwrap();
+    let text = ayml::to_string(&v).unwrap();
+    assert_eq!(
+        text,
+        "key: value\nlist:\n  - 1\n  - 2\n  - 3\nnested:\n  a:\n    b: c\nseq:\n  - x\n  - - y\n"
+    );
+    assert_eq!(ayml::from_str::<Value>(&text).unwrap(), v);
+}
+
+#[test]
+fn regression_keys() {
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct Config {
-        name: String,
-        debug: bool,
-        server: Server,
-        ports: Vec<u16>,
-        tags: BTreeMap<String, String>,
+    struct Reserved {
+        #[serde(rename = "true")]
+        t: i32,
+        #[serde(rename = "null")]
+        n: i32,
+        #[serde(rename = "a: b")]
+        colon: i32,
     }
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    struct Server {
-        host: String,
-        port: u16,
-    }
-    let mut tags = BTreeMap::new();
-    tags.insert("env".into(), "prod".into());
-    tags.insert("version".into(), "1.0".into());
-    roundtrip(&Config {
-        name: "myapp".into(),
-        debug: false,
-        server: Server {
-            host: "localhost".into(),
-            port: 8080,
-        },
-        ports: vec![80, 443, 8080],
-        tags,
+    roundtrip(&Reserved {
+        t: 1,
+        n: 2,
+        colon: 3,
     });
+    assert_eq!(
+        ayml::to_string(&Reserved {
+            t: 1,
+            n: 2,
+            colon: 3
+        })
+        .unwrap(),
+        "true: 1\nnull: 2\n\"a: b\": 3\n"
+    );
+    roundtrip(&BTreeMap::from([
+        ("line\nbreak".to_string(), 1),
+        ("tab\t".to_string(), 2),
+    ]));
+    assert!(ayml::from_str::<Value>("a: 1\n\"a\": 2").is_err());
+    let v: BTreeMap<String, i32> = ayml::from_str("1: 1\n0x1: 2").unwrap();
+    assert_eq!(v.len(), 2);
+}
+
+#[test]
+fn regression_triple_quoted_control_characters() {
+    roundtrip(&"line\0\nnext\x01".to_string());
+    roundtrip(&"\u{85}\n\u{2029}".to_string());
 }

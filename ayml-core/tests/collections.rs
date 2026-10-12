@@ -1,367 +1,420 @@
-// ── Block Sequences ──────────────────────────────────────────────
+//! Block and flow collections, keys, and document structure.
 
-use ayml_core::{
-    parse,
-    value::{MapKey, Value},
-};
+mod common;
+
+use ayml_core::{ErrorKind, Value, parse};
+use common::{assert_syntax, err, get, items, keys, ok, s};
 
 #[test]
 fn sequence_of_scalars() {
-    let input = "- Mark McGwire\n- Sammy Sosa\n- Ken Griffey";
-    let node = parse(input).unwrap();
-    let seq = node.value.as_sequence().unwrap();
-    assert_eq!(seq.len(), 3);
-    assert_eq!(seq[0].value, Value::Str("Mark McGwire".into()));
-    assert_eq!(seq[1].value, Value::Str("Sammy Sosa".into()));
-    assert_eq!(seq[2].value, Value::Str("Ken Griffey".into()));
-}
-
-#[test]
-fn sequence_of_integers() {
-    let input = "- 1\n- 2\n- 3";
-    let node = parse(input).unwrap();
-    let seq = node.value.as_sequence().unwrap();
-    assert_eq!(seq.len(), 3);
-    assert_eq!(seq[0].value, Value::Int(1));
-    assert_eq!(seq[1].value, Value::Int(2));
-    assert_eq!(seq[2].value, Value::Int(3));
-}
-
-#[test]
-fn sequence_of_mixed() {
-    let input = "- hello\n- 42\n- true\n- null\n- 3.25";
-    let node = parse(input).unwrap();
-    let seq = node.value.as_sequence().unwrap();
-    assert_eq!(seq.len(), 5);
-    assert_eq!(seq[0].value, Value::Str("hello".into()));
-    assert_eq!(seq[1].value, Value::Int(42));
-    assert_eq!(seq[2].value, Value::Bool(true));
-    assert!(seq[3].value.is_null());
-    assert_eq!(seq[4].value, Value::Float(3.25));
-}
-
-// ── Block Mappings ───────────────────────────────────────────────
-
-#[test]
-fn mapping_scalars_to_scalars() {
-    let input = "hr: 65\navg: 0.278\nrbi: 147";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    assert_eq!(map[&MapKey::String("hr".into())].value, Value::Int(65));
+    let node = ok("- Mark McGwire\n- Sammy Sosa\n- Ken Griffey\n");
+    let v: Vec<_> = items(&node).iter().map(|n| n.value.clone()).collect();
     assert_eq!(
-        map[&MapKey::String("avg".into())].value,
-        Value::Float(0.278)
-    );
-    assert_eq!(map[&MapKey::String("rbi".into())].value, Value::Int(147));
-}
-
-#[test]
-fn mapping_scalars_to_sequences() {
-    let input = "\
-american:
-- Boston Red Sox
-- Detroit Tigers
-- New York Yankees
-national:
-- New York Mets
-- Chicago Cubs
-- Atlanta Braves";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-
-    let american = map[&MapKey::String("american".into())]
-        .value
-        .as_sequence()
-        .unwrap();
-    assert_eq!(american.len(), 3);
-    assert_eq!(american[0].value, Value::Str("Boston Red Sox".into()));
-
-    let national = map[&MapKey::String("national".into())]
-        .value
-        .as_sequence()
-        .unwrap();
-    assert_eq!(national.len(), 3);
-    assert_eq!(national[0].value, Value::Str("New York Mets".into()));
-}
-
-#[test]
-fn sequence_of_mappings() {
-    let input = "\
-- name: Mark McGwire
-  hr:   65
-  avg:  0.278
-- name: Sammy Sosa
-  hr:   63
-  avg:  0.288";
-    let node = parse(input).unwrap();
-    let seq = node.value.as_sequence().unwrap();
-    assert_eq!(seq.len(), 2);
-
-    let m0 = seq[0].value.as_mapping().unwrap();
-    assert_eq!(
-        m0[&MapKey::String("name".into())].value,
-        Value::Str("Mark McGwire".into())
-    );
-    assert_eq!(m0[&MapKey::String("hr".into())].value, Value::Int(65));
-    assert_eq!(m0[&MapKey::String("avg".into())].value, Value::Float(0.278));
-
-    let m1 = seq[1].value.as_mapping().unwrap();
-    assert_eq!(
-        m1[&MapKey::String("name".into())].value,
-        Value::Str("Sammy Sosa".into())
-    );
-    assert_eq!(m1[&MapKey::String("hr".into())].value, Value::Int(63));
-}
-
-#[test]
-fn nested_mapping() {
-    let input = "\
-bill-to:
-  given: Chris
-  family: Dumars
-  address:
-    city: Royal Oak
-    state: MI";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    let bill_to = map[&MapKey::String("bill-to".into())]
-        .value
-        .as_mapping()
-        .unwrap();
-    assert_eq!(
-        bill_to[&MapKey::String("given".into())].value,
-        Value::Str("Chris".into())
-    );
-
-    let address = bill_to[&MapKey::String("address".into())]
-        .value
-        .as_mapping()
-        .unwrap();
-    assert_eq!(
-        address[&MapKey::String("city".into())].value,
-        Value::Str("Royal Oak".into())
+        v,
+        vec![s("Mark McGwire"), s("Sammy Sosa"), s("Ken Griffey")]
     );
 }
 
 #[test]
-fn compact_nested_mapping() {
-    let input = "\
-- item: Super Hoop
-  quantity: 1
-- item: Basketball
-  quantity: 4
-- item: Big Shoes
-  quantity: 1";
-    let node = parse(input).unwrap();
-    let seq = node.value.as_sequence().unwrap();
-    assert_eq!(seq.len(), 3);
-
-    let m0 = seq[0].value.as_mapping().unwrap();
+fn sequence_of_mixed_scalars() {
+    let node = ok("- 1\n- 2.5\n- true\n- null\n- text\n");
+    let v: Vec<_> = items(&node).iter().map(|n| n.value.clone()).collect();
     assert_eq!(
-        m0[&MapKey::String("item".into())].value,
-        Value::Str("Super Hoop".into())
-    );
-    assert_eq!(m0[&MapKey::String("quantity".into())].value, Value::Int(1));
-}
-
-// ── Flow Sequences ───────────────────────────────────────────────
-
-#[test]
-fn flow_sequence_simple() {
-    let input = "items: [name, hr, avg]";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    let seq = map[&MapKey::String("items".into())]
-        .value
-        .as_sequence()
-        .unwrap();
-    assert_eq!(seq.len(), 3);
-    assert_eq!(seq[0].value, Value::Str("name".into()));
-    assert_eq!(seq[1].value, Value::Str("hr".into()));
-    assert_eq!(seq[2].value, Value::Str("avg".into()));
-}
-
-#[test]
-fn flow_sequence_with_types() {
-    let input = "items: [Mark McGwire, 65, 0.278]";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    let seq = map[&MapKey::String("items".into())]
-        .value
-        .as_sequence()
-        .unwrap();
-    assert_eq!(seq[0].value, Value::Str("Mark McGwire".into()));
-    assert_eq!(seq[1].value, Value::Int(65));
-    assert_eq!(seq[2].value, Value::Float(0.278));
-}
-
-#[test]
-fn flow_sequence_trailing_comma() {
-    let input = "items: [a, b, c,]";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    let seq = map[&MapKey::String("items".into())]
-        .value
-        .as_sequence()
-        .unwrap();
-    assert_eq!(seq.len(), 3);
-}
-
-#[test]
-fn flow_sequence_empty() {
-    let input = "items: []";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    let seq = map[&MapKey::String("items".into())]
-        .value
-        .as_sequence()
-        .unwrap();
-    assert_eq!(seq.len(), 0);
-}
-
-#[test]
-fn flow_sequence_nested() {
-    let input = "\
-- [name, hr, avg]
-- [Mark McGwire, 65, 0.278]
-- [Sammy Sosa, 63, 0.288]";
-    let node = parse(input).unwrap();
-    let seq = node.value.as_sequence().unwrap();
-    assert_eq!(seq.len(), 3);
-
-    let row0 = seq[0].value.as_sequence().unwrap();
-    assert_eq!(row0.len(), 3);
-    assert_eq!(row0[0].value, Value::Str("name".into()));
-}
-
-// ── Flow Mappings ────────────────────────────────────────────────
-
-#[test]
-fn flow_mapping_simple() {
-    let input = "player: {hr: 65, avg: 0.278}";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    let inner = map[&MapKey::String("player".into())]
-        .value
-        .as_mapping()
-        .unwrap();
-    assert_eq!(inner[&MapKey::String("hr".into())].value, Value::Int(65));
-    assert_eq!(
-        inner[&MapKey::String("avg".into())].value,
-        Value::Float(0.278)
+        v,
+        vec![
+            Value::Int(1),
+            Value::Float(2.5),
+            Value::Bool(true),
+            Value::Null,
+            s("text")
+        ]
     );
 }
 
 #[test]
-fn flow_mapping_trailing_comma() {
-    let input = "player: {hr: 65, avg: 0.278,}";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    let inner = map[&MapKey::String("player".into())]
-        .value
-        .as_mapping()
-        .unwrap();
-    assert_eq!(inner.len(), 2);
+fn extra_spaces_after_dash() {
+    let node = ok("-   a\n-  b\n");
+    let v: Vec<_> = items(&node).iter().map(|n| n.value.clone()).collect();
+    assert_eq!(v, vec![s("a"), s("b")]);
 }
 
 #[test]
-fn flow_mapping_multiline() {
-    let input = "player: {\n  hr: 63,\n  avg: 0.288,\n}";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    let inner = map[&MapKey::String("player".into())]
-        .value
-        .as_mapping()
-        .unwrap();
-    assert_eq!(inner[&MapKey::String("hr".into())].value, Value::Int(63));
+fn dash_must_be_followed_by_a_space() {
+    assert_syntax("-\n- a", "sequence entry has no value");
+    assert_syntax("- a\n-", "sequence entry has no value");
+    assert_syntax("-  # comment\n", "sequence entry has no value");
+    assert_eq!(err("-\ta").kind, ErrorKind::TabIndent);
+    assert_eq!(err("- \ta").kind, ErrorKind::TabIndent);
 }
 
 #[test]
-fn flow_mapping_empty() {
-    let input = "player: {}";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    let inner = map[&MapKey::String("player".into())]
-        .value
-        .as_mapping()
-        .unwrap();
-    assert_eq!(inner.len(), 0);
-}
-
-// ── Mapping Key Types ────────────────────────────────────────────
-
-#[test]
-fn bool_mapping_key() {
-    let input = "true: yes\nfalse: no";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    assert_eq!(map[&MapKey::Bool(true)].value, Value::Str("yes".into()));
-    assert_eq!(map[&MapKey::Bool(false)].value, Value::Str("no".into()));
+fn compact_sequence() {
+    let node = ok("- - a\n  - b\n- - c\n");
+    let outer = items(&node);
+    assert_eq!(outer.len(), 2);
+    let first: Vec<_> = items(&outer[0]).iter().map(|n| n.value.clone()).collect();
+    assert_eq!(first, vec![s("a"), s("b")]);
+    assert_eq!(items(&outer[1])[0].value, s("c"));
 }
 
 #[test]
-fn int_mapping_key() {
-    let input = "1: first\n2: second";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    assert_eq!(map[&MapKey::Int(1)].value, Value::Str("first".into()));
-    assert_eq!(map[&MapKey::Int(2)].value, Value::Str("second".into()));
+fn deeply_compact_sequence() {
+    let node = ok("- - - x\n    - y\n");
+    let level2 = &items(&items(&node)[0])[0];
+    let v: Vec<_> = items(level2).iter().map(|n| n.value.clone()).collect();
+    assert_eq!(v, vec![s("x"), s("y")]);
 }
 
 #[test]
-fn quoted_null_key() {
-    let input = "\"null\": a value";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
+fn compact_mapping() {
+    let node = ok("- name: Mark\n  hr: 65\n- name: Sammy\n  hr: 63\n");
+    let entries = items(&node);
+    assert_eq!(keys(&entries[0]), vec!["name", "hr"]);
+    assert_eq!(get(&entries[1], "hr").value, Value::Int(63));
+}
+
+#[test]
+fn compact_mapping_aligned_by_extra_dash_spaces() {
+    let node = ok("-   name: aligned\n    value: 1\n-   other: 2\n");
+    let entries = items(&node);
+    assert_eq!(keys(&entries[0]), vec!["name", "value"]);
+    assert_eq!(keys(&entries[1]), vec!["other"]);
+}
+
+#[test]
+fn compact_mapping_with_nested_block_values() {
+    let node = ok("- a:\n    - x\n  b:\n    c: 1\n");
+    let entry = &items(&node)[0];
+    assert_eq!(items(get(entry, "a"))[0].value, s("x"));
+    assert_eq!(get(get(entry, "b"), "c").value, Value::Int(1));
+}
+
+#[test]
+fn compact_mapping_with_implicit_sequence() {
+    let node = ok("- a:\n  - x\n  b: 1\n");
+    let entry = &items(&node)[0];
+    assert_eq!(items(get(entry, "a"))[0].value, s("x"));
+    assert_eq!(get(entry, "b").value, Value::Int(1));
+}
+
+#[test]
+fn compact_mapping_misaligned_continuation_is_an_error() {
+    assert_syntax("- a: 1\n    b: 2", "unexpected indentation");
+    assert!(parse("- a: 1\n b: 2").is_err());
+}
+
+#[test]
+fn compact_sequence_followed_by_mapping_line_is_an_error() {
+    assert_syntax("- - a\n  b: 1", "expected a sequence entry");
+}
+
+#[test]
+fn block_sequence_cannot_start_after_key() {
+    assert_syntax("k: - a", "must start on the line after its key");
+}
+
+#[test]
+fn root_sequence_followed_by_mapping_is_an_error() {
+    assert_syntax("- a\nb: 1", "expected a sequence entry");
+}
+
+// ── Block mappings ──────────────────────────────────────────────────
+
+#[test]
+fn mapping_scalars() {
+    let node = ok("hr:  65\navg: 0.278\nrbi: 147\n");
+    assert_eq!(keys(&node), vec!["hr", "avg", "rbi"]);
+    assert_eq!(get(&node, "avg").value, Value::Float(0.278));
+}
+
+#[test]
+fn mapping_preserves_order() {
+    let node = ok("z: 1\na: 2\nm: 3\n");
+    assert_eq!(keys(&node), vec!["z", "a", "m"]);
+}
+
+#[test]
+fn spaces_before_colon() {
+    let node = ok("city    : Royal Oak\nstate\t: MI\n");
+    assert_eq!(get(&node, "city").value, s("Royal Oak"));
+    assert_eq!(get(&node, "state").value, s("MI"));
+}
+
+#[test]
+fn tab_after_colon() {
+    assert_eq!(get(&ok("a:\t1"), "a").value, Value::Int(1));
+}
+
+#[test]
+fn keys_with_spaces_and_punctuation() {
+    let node = ok("key two: 1\nbill-to: 2\na.b/c: 3\nx[0]: 4\n-a: 5\n");
     assert_eq!(
-        map[&MapKey::String("null".into())].value,
-        Value::Str("a value".into())
+        keys(&node),
+        vec!["key two", "bill-to", "a.b/c", "x[0]", "-a"]
     );
 }
 
-// ── CRLF and CR line endings ─────────────────────────────────────
-
 #[test]
-fn crlf_line_endings_in_mapping() {
-    let input = "a: 1\r\nb: 2\r\nc: 3";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    assert_eq!(map[&MapKey::String("a".into())].value, Value::Int(1));
-    assert_eq!(map[&MapKey::String("b".into())].value, Value::Int(2));
-    assert_eq!(map[&MapKey::String("c".into())].value, Value::Int(3));
+fn nested_mappings() {
+    let node = ok("a:\n  b:\n    c: 1\n  d: 2\ne: 3\n");
+    assert_eq!(get(get(get(&node, "a"), "b"), "c").value, Value::Int(1));
+    assert_eq!(get(get(&node, "a"), "d").value, Value::Int(2));
+    assert_eq!(get(&node, "e").value, Value::Int(3));
 }
 
 #[test]
-fn cr_line_endings_in_mapping() {
-    let input = "a: 1\rb: 2\rc: 3";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    assert_eq!(map[&MapKey::String("a".into())].value, Value::Int(1));
-    assert_eq!(map[&MapKey::String("b".into())].value, Value::Int(2));
-    assert_eq!(map[&MapKey::String("c".into())].value, Value::Int(3));
+fn nested_mapping_indentation_is_detected() {
+    let node = ok("a:\n     b: 1\n     c: 2\n");
+    assert_eq!(keys(get(&node, "a")), vec!["b", "c"]);
 }
 
 #[test]
-fn crlf_line_endings_in_sequence() {
-    let input = "- one\r\n- two\r\n- three";
-    let node = parse(input).unwrap();
-    let seq = node.value.as_sequence().unwrap();
-    assert_eq!(seq[0].value, Value::Str("one".into()));
-    assert_eq!(seq[1].value, Value::Str("two".into()));
-    assert_eq!(seq[2].value, Value::Str("three".into()));
+fn mapping_of_sequences() {
+    let node = ok("american:\n  - Boston\n  - Detroit\nnational:\n  - Mets\n");
+    assert_eq!(items(get(&node, "american")).len(), 2);
+    assert_eq!(items(get(&node, "national"))[0].value, s("Mets"));
 }
 
 #[test]
-fn crlf_in_nested_mapping() {
-    let input = "outer:\r\n  inner: val";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    let inner = map[&MapKey::String("outer".into())]
-        .value
-        .as_mapping()
-        .unwrap();
+fn implicit_sequence_indentation() {
+    let node = ok("items:\n- alpha\n- beta\nnext: 1\n");
+    assert_eq!(items(get(&node, "items")).len(), 2);
+    assert_eq!(get(&node, "next").value, Value::Int(1));
+}
+
+#[test]
+fn blank_lines_between_entries_and_before_nested_value() {
+    let node = ok("\n\na: 1\n\n\nb:\n\n  c: 2\n\n");
+    assert_eq!(get(get(&node, "b"), "c").value, Value::Int(2));
+}
+
+#[test]
+fn inconsistent_indentation_is_an_error() {
+    assert_syntax("a:\n    b: 1\n  c: 2", "unexpected indentation");
+    assert!(parse("a: 1\n b: 2").is_err());
+}
+
+#[test]
+fn next_line_scalar_values_are_rejected() {
+    assert_syntax("a:\n  b", "must be a block mapping or sequence");
+    assert_syntax("a:\n  [1, 2]", "must be a block mapping or sequence");
+    assert_syntax("a:\n  \"x\"", "must be a block mapping or sequence");
+}
+
+#[test]
+fn missing_values_are_rejected() {
+    assert_syntax("a:\nb: 1", "missing value for key `a`");
+    assert_syntax("a:", "missing value for key `a`");
+    assert_syntax("a:  # comment\n", "missing value for key `a`");
+    assert_syntax("a:\n  # only a comment\n", "missing value for key `a`");
+}
+
+#[test]
+fn mapping_in_mapping_value_on_same_line_is_an_error() {
+    assert_syntax("a: b: c", "unexpected `:`");
+}
+
+#[test]
+fn mapping_line_that_is_not_an_entry_is_an_error() {
+    assert_syntax("a: 1\nb\n", "expected a mapping entry");
+    assert_syntax("a: 1\n- b\n", "found a sequence entry");
+}
+
+#[test]
+fn value_continuation_line_is_an_error() {
+    assert_syntax("a: b\n  c", "unexpected indentation");
+}
+
+#[test]
+fn keys_are_never_resolved() {
+    let node = ok("true: a\n1: b\nnull: c\n1.5: d\n0x10: e\ninf: f\n");
+    assert_eq!(keys(&node), vec!["true", "1", "null", "1.5", "0x10", "inf"]);
+}
+
+#[test]
+fn quoted_keys() {
+    let node = ok("\"key three\": 1\n\"with: colon\": 2\n\"\": 3\n\"a\\nb\": 4\n");
+    assert_eq!(keys(&node), vec!["key three", "with: colon", "", "a\nb"]);
+}
+
+#[test]
+fn duplicate_keys_are_rejected() {
+    assert_eq!(err("a: 1\na: 2").kind, ErrorKind::DuplicateKey("a".into()));
     assert_eq!(
-        inner[&MapKey::String("inner".into())].value,
-        Value::Str("val".into())
+        err("a: 1\n\"a\": 2").kind,
+        ErrorKind::DuplicateKey("a".into())
     );
+    assert_eq!(
+        err("\"\\x61\": 1\na: 2").kind,
+        ErrorKind::DuplicateKey("a".into())
+    );
+    assert_eq!(
+        err("{a: 1, \"a\": 2}").kind,
+        ErrorKind::DuplicateKey("a".into())
+    );
+    assert_eq!(
+        err("- x: 1\n  x: 2").kind,
+        ErrorKind::DuplicateKey("x".into())
+    );
+}
+
+#[test]
+fn keys_that_look_alike_are_distinct() {
+    let node = ok("1: a\n0x1: b\n01: c\n");
+    assert_eq!(keys(&node), vec!["1", "0x1", "01"]);
+}
+
+#[test]
+fn triple_quoted_strings_cannot_be_keys() {
+    assert!(parse("\"\"\"\n  x\n  \"\"\": 1").is_err());
+    assert_syntax("{\"\"\"\n  x\n  \"\"\": 1}", "cannot be mapping keys");
+}
+
+#[test]
+fn key_followed_by_colon_without_space_is_not_a_key() {
+    assert_eq!(keys(&ok("a:b: 1")), vec!["a:b"]);
+    assert_eq!(ok("a:b").value, s("a:b"));
+}
+
+#[test]
+fn flow_sequences() {
+    let node = ok("[name, hr, avg]");
+    let v: Vec<_> = items(&node).iter().map(|n| n.value.clone()).collect();
+    assert_eq!(v, vec![s("name"), s("hr"), s("avg")]);
+    assert!(items(&ok("[]")).is_empty());
+    assert!(items(&ok("[ ]")).is_empty());
+    assert_eq!(items(&ok("[1, 2,]")).len(), 2);
+    assert_eq!(
+        items(&ok("[Mark McGwire, 65, 0.278]"))[0].value,
+        s("Mark McGwire")
+    );
+}
+
+#[test]
+fn nested_flow_collections() {
+    let node = ok("[[1, 2], {a: [3]}, []]");
+    let outer = items(&node);
+    assert_eq!(items(&outer[0]).len(), 2);
+    assert_eq!(items(get(&outer[1], "a"))[0].value, Value::Int(3));
+}
+
+#[test]
+fn flow_mappings() {
+    let node = ok("{hr: 65, avg: 0.278}");
+    assert_eq!(keys(&node), vec!["hr", "avg"]);
+    assert!(keys(&ok("{}")).is_empty());
+    assert_eq!(keys(&ok("{a: 1,}")), vec!["a"]);
+}
+
+#[test]
+fn json_style_flow_mapping() {
+    let node = ok("{\"key\": [\"value\", 3, true, null], \"b\":1}");
+    assert_eq!(items(get(&node, "key")).len(), 4);
+    assert_eq!(get(&node, "b").value, Value::Int(1));
+}
+
+#[test]
+fn multi_line_flow_collections() {
+    let node = ok("Sammy Sosa: {\n  hr: 63,\n  avg: 0.288,\n}\n");
+    assert_eq!(keys(get(&node, "Sammy Sosa")), vec!["hr", "avg"]);
+    let node = ok("k: [\n  1,\n\n  2\n]\n");
+    assert_eq!(items(get(&node, "k")).len(), 2);
+}
+
+#[test]
+fn flow_continuation_lines_must_respect_indentation() {
+    assert_syntax(
+        "a:\n  b: [1,\n2]\n",
+        "lines inside a flow collection must be indented at least 2 spaces",
+    );
+    // At the entry's own indentation is fine.
+    assert_eq!(
+        items(get(get(&ok("a:\n  b: [1,\n  2]\n"), "a"), "b")).len(),
+        2
+    );
+}
+
+#[test]
+fn tab_indented_flow_continuation_is_an_error() {
+    assert_eq!(err("[1,\n\t2]").kind, ErrorKind::TabIndent);
+}
+
+#[test]
+fn flow_bare_strings_stop_at_flow_indicators() {
+    let node = ok("[a b, c:d, e]");
+    let v: Vec<_> = items(&node).iter().map(|n| n.value.clone()).collect();
+    assert_eq!(v, vec![s("a b"), s("c:d"), s("e")]);
+    assert!(parse("[a[b]]").is_err());
+}
+
+#[test]
+fn flow_mapping_key_without_space_after_colon() {
+    assert_syntax("{a:1}", "`:` must be followed by a space");
+    assert_syntax("{a}", "expected `:` after mapping key");
+}
+
+#[test]
+fn flow_errors() {
+    assert_syntax("[1, , 2]", "empty entry");
+    assert_syntax("[,]", "empty entry");
+    assert_syntax("[\"a\" b]", "expected `,` or `]`");
+    assert!(matches!(err("[1, 2").kind, ErrorKind::UnexpectedEof(_)));
+    assert!(matches!(err("{a: 1").kind, ErrorKind::UnexpectedEof(_)));
+    assert_syntax("{a: }", "missing value for key `a`");
+    assert_syntax("[a: 1]", "expected `,` or `]`");
+    assert_syntax("[1] x", "unexpected `x` after a value");
+}
+
+#[test]
+fn flow_collection_as_mapping_key_is_an_error() {
+    assert!(parse("[a]: 1").is_err());
+}
+
+#[test]
+fn crlf_and_cr_line_breaks() {
+    for input in [
+        "a: 1\r\nb:\r\n  - x\r\n",
+        "a: 1\rb:\r  - x\r",
+        "a: 1\nb:\r\n  - x\r",
+    ] {
+        let node = ok(input);
+        assert_eq!(get(&node, "a").value, Value::Int(1));
+        assert_eq!(items(get(&node, "b"))[0].value, s("x"));
+    }
+}
+
+#[test]
+fn missing_final_newline() {
+    assert_eq!(get(&ok("a: 1"), "a").value, Value::Int(1));
+}
+
+#[test]
+fn trailing_whitespace_on_lines() {
+    let node = ok("a: 1   \nb:  \n  - x \t\n");
+    assert_eq!(get(&node, "a").value, Value::Int(1));
+}
+
+#[test]
+fn root_must_not_be_indented() {
+    assert_syntax("  a: 1", "root node must not be indented");
+    assert_syntax("  42", "root node must not be indented");
+}
+
+#[test]
+fn empty_documents_are_errors() {
+    for input in ["", "\n\n", "   \n", "# just a comment\n", "# a\n\n# b"] {
+        assert_eq!(err(input).kind, ErrorKind::EmptyDocument, "{input:?}");
+    }
+}
+
+#[test]
+fn one_root_node_per_document() {
+    assert_syntax("a\nb", "unexpected content after the root value");
+    assert_syntax("[1]\n[2]", "unexpected content after the root value");
+}
+
+#[test]
+fn root_scalars_and_flow_collections() {
+    assert_eq!(ok("42 # answer\n").value, Value::Int(42));
+    assert_eq!(items(&ok("[1,2,3,4,] # side comment")).len(), 4);
 }

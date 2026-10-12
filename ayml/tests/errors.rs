@@ -1,183 +1,214 @@
-//! Error handling tests: invalid input, type mismatches, edge cases.
+use std::collections::HashMap;
 
-use ayml::from_str;
+use ayml::{Error, from_slice, from_str, to_string};
+use serde::{Deserialize, Serialize};
 
-// ── Parse errors ────────────────────────────────────────────────
+fn location<T: for<'de> Deserialize<'de> + std::fmt::Debug>(input: &str) -> (usize, usize, String) {
+    let err = from_str::<T>(input).unwrap_err();
+    let loc = err
+        .location()
+        .unwrap_or_else(|| panic!("no location: {err}"));
+    (loc.line, loc.column, err.to_string())
+}
+
+// ── Syntax errors ───────────────────────────────────────────────────
 
 #[test]
-fn error_empty_input() {
-    assert!(from_str::<i32>("").is_err());
-    assert!(from_str::<String>("").is_err());
-    assert!(from_str::<bool>("").is_err());
+fn syntax_errors() {
+    for input in [
+        "",
+        "# only a comment\n",
+        "42 extra\nmore",
+        "\"hello",
+        "\"hello\nworld\"",
+        r#""\q""#,
+        r#""\xGG""#,
+        r#""\uD800""#,
+        "[1, 2",
+        "{a: 1",
+        "a: 1\na: 2",
+        "password: abc#123",
+        "key: 'single'",
+        "9999999999999999999",
+        "1e400",
+        "a:\n\tb: 1",
+        "\u{FEFF}a: 1",
+    ] {
+        let err = from_str::<ayml::Value>(input).unwrap_err();
+        assert!(matches!(err, Error::Syntax(_)), "{input:?}: {err}");
+        assert!(err.location().is_some(), "{input:?}");
+    }
 }
 
 #[test]
-fn error_trailing_characters() {
-    assert!(from_str::<i32>("42 extra").is_err());
-    assert!(from_str::<bool>("true extra").is_err());
-}
-
-#[test]
-fn error_type_mismatch_bool() {
-    assert!(from_str::<bool>("42").is_err());
-    assert!(from_str::<bool>("hello").is_err());
-    assert!(from_str::<bool>("null").is_err());
-}
-
-#[test]
-fn error_type_mismatch_int() {
-    assert!(from_str::<i32>("hello").is_err());
-    assert!(from_str::<i32>("true").is_err());
-    assert!(from_str::<i32>("3.14").is_err());
-}
-
-#[test]
-fn error_type_mismatch_float() {
-    assert!(from_str::<f64>("hello").is_err());
-    assert!(from_str::<f64>("true").is_err());
-}
-
-#[test]
-fn error_integer_overflow_i8() {
-    assert!(from_str::<i8>("128").is_err());
-    assert!(from_str::<i8>("-129").is_err());
-}
-
-#[test]
-fn error_integer_overflow_u8() {
-    assert!(from_str::<u8>("256").is_err());
-    assert!(from_str::<u8>("-1").is_err());
-}
-
-#[test]
-fn error_integer_overflow_i64() {
-    // Larger than i64::MAX
-    assert!(from_str::<i64>("9999999999999999999").is_err());
-}
-
-#[test]
-fn error_unclosed_string() {
-    assert!(from_str::<String>(r#""hello"#).is_err());
-}
-
-#[test]
-fn error_newline_in_string() {
-    assert!(from_str::<String>("\"hello\nworld\"").is_err());
-}
-
-#[test]
-fn error_invalid_escape() {
-    assert!(from_str::<String>(r#""\q""#).is_err());
-}
-
-#[test]
-fn error_invalid_hex_escape() {
-    assert!(from_str::<String>(r#""\xGG""#).is_err());
-}
-
-#[test]
-fn error_invalid_unicode_escape() {
-    assert!(from_str::<String>(r#""\uZZZZ""#).is_err());
-}
-
-#[test]
-fn error_unclosed_flow_sequence() {
-    assert!(from_str::<Vec<i32>>("[1, 2").is_err());
-}
-
-#[test]
-fn error_unclosed_flow_mapping() {
-    assert!(from_str::<std::collections::HashMap<String, i32>>("{a: 1").is_err());
-}
-
-#[test]
-fn error_missing_colon_in_mapping() {
-    use serde::Deserialize;
-    #[derive(Deserialize)]
+fn syntax_error_inside_mistyped_value_wins() {
+    #[derive(Deserialize, Debug)]
     struct S {
         #[allow(dead_code)]
-        a: i32,
+        a: u8,
     }
-    assert!(from_str::<S>("a 1").is_err());
+    let err = from_str::<S>("a: [1, {b: 2, b: 3}]\n").unwrap_err();
+    assert_eq!(err.to_string(), "1:15: duplicate mapping key `b`");
 }
 
 #[test]
-fn error_expected_sequence() {
+fn syntax_error_location() {
+    let err = from_str::<HashMap<String, String>>("a: 1\nb: x#y\n").unwrap_err();
+    let loc = err.location().unwrap();
+    assert_eq!((loc.line, loc.column), (2, 5), "{err}");
+    assert!(err.to_string().starts_with("2:5: "), "{err}");
+}
+
+#[test]
+fn invalid_utf8() {
+    assert!(matches!(
+        from_slice::<String>(&[0xFF, 0xFE]),
+        Err(Error::Utf8(_))
+    ));
+    assert!(matches!(
+        ayml::from_reader::<_, String>(&[b'a', 0xFF][..]),
+        Err(Error::Utf8(_))
+    ));
+}
+
+#[test]
+fn scalars_must_match_their_type() {
+    assert!(from_str::<bool>("42").is_err());
+    assert!(from_str::<bool>("yes").is_err());
+    assert!(from_str::<i32>("hello").is_err());
+    assert!(from_str::<i32>("3.14").is_err());
+    assert!(from_str::<i32>("true").is_err());
+    assert!(from_str::<u16>("\"8080\"").is_err());
+    assert!(from_str::<f64>("\"1.5\"").is_err());
+    assert!(from_str::<String>("1.0").is_err());
+    assert!(from_str::<String>("42").is_err());
+    assert!(from_str::<String>("null").is_err());
+    assert!(from_str::<String>("true").is_err());
+    assert!(from_str::<()>("0").is_err());
     assert!(from_str::<Vec<i32>>("42").is_err());
+    assert!(from_str::<HashMap<String, i32>>("[1]").is_err());
 }
 
 #[test]
-fn error_null_expected() {
-    assert!(from_str::<()>("42").is_err());
-    assert!(from_str::<()>("true").is_err());
-    assert!(from_str::<()>("hello").is_err());
+fn integer_ranges() {
+    assert!(from_str::<i8>("128").is_err());
+    assert!(from_str::<i8>("-129").is_err());
+    assert!(from_str::<u8>("256").is_err());
+    assert!(from_str::<u8>("-1").is_err());
+    assert!(from_str::<u64>("-1").is_err());
 }
 
 #[test]
-fn error_char_too_long() {
+fn chars_need_exactly_one_character() {
     assert!(from_str::<char>("ab").is_err());
-}
-
-#[test]
-fn error_char_empty() {
     assert!(from_str::<char>(r#""""#).is_err());
 }
 
-// ── Invalid UTF-8 ───────────────────────────────────────────────
-
 #[test]
-fn error_invalid_utf8_slice() {
-    assert!(ayml::from_slice::<String>(&[0xFF, 0xFE]).is_err());
+fn tuple_length_must_match() {
+    assert!(from_str::<(i32, i32)>("[1, 2, 3]").is_err());
+    assert!(from_str::<(i32, i32)>("[1]").is_err());
 }
 
-// ── Missing struct fields ───────────────────────────────────────
+#[test]
+fn invalid_typed_keys() {
+    assert!(from_str::<HashMap<u32, i32>>("abc: 1").is_err());
+    assert!(from_str::<HashMap<u8, i32>>("300: 1").is_err());
+    assert!(from_str::<HashMap<bool, i32>>("yes: 1").is_err());
+}
 
 #[test]
-fn error_missing_required_field() {
-    use serde::Deserialize;
-    #[derive(Deserialize)]
-    struct Config {
-        #[allow(dead_code)]
-        name: String,
-        #[allow(dead_code)]
-        port: u16,
+fn enum_errors() {
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    enum E {
+        A,
+        B(i32),
     }
-    // Only provides 'name', missing 'port'
-    assert!(from_str::<Config>("name: app").is_err());
+    assert!(from_str::<E>("C").is_err());
+    assert!(from_str::<E>("{A: 1, B: 2}").is_err());
+    assert!(from_str::<E>("A: 1").is_err());
+    assert!(from_str::<E>("B").is_err());
+    assert!(from_str::<E>("42").is_err());
 }
 
-// ── Enum errors ─────────────────────────────────────────────────
+#[derive(Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct Server {
+    host: String,
+    port: u16,
+}
+
+#[derive(Deserialize, Debug)]
+#[allow(dead_code)]
+struct Config {
+    servers: Vec<Server>,
+}
 
 #[test]
-fn error_unknown_enum_variant() {
-    use serde::Deserialize;
-    #[derive(Deserialize)]
-    enum Color {
-        #[allow(dead_code)]
-        Red,
-        #[allow(dead_code)]
-        Blue,
+fn type_error_points_at_value() {
+    let (line, col, msg) =
+        location::<Config>("servers:\n  - host: a\n    port: 80\n  - host: b\n    port: high\n");
+    assert_eq!((line, col), (5, 11), "{msg}");
+    assert!(msg.contains("invalid type: string \"high\""), "{msg}");
+}
+
+#[test]
+fn range_error_points_at_value() {
+    let (line, col, msg) = location::<Server>("host: a\nport: 70000\n");
+    assert_eq!((line, col), (2, 7), "{msg}");
+}
+
+#[test]
+fn unknown_field_points_at_key() {
+    let (line, col, msg) = location::<Server>("host: a\nport: 1\nprot: 2\n");
+    assert_eq!((line, col), (3, 1), "{msg}");
+    assert!(msg.contains("unknown field `prot`"), "{msg}");
+}
+
+#[test]
+fn missing_field_points_at_mapping() {
+    let (line, col, msg) = location::<Config>("# c\nservers:\n  - host: a\n");
+    assert_eq!((line, col), (3, 5), "{msg}");
+    assert!(msg.contains("missing field `port`"), "{msg}");
+}
+
+#[test]
+fn from_node_errors_have_spans_but_no_location() {
+    let node = ayml_core::parse("port: x").unwrap();
+    let err = ayml::from_node::<Server>(&node).unwrap_err();
+    let Error::Data { span, location, .. } = &err else {
+        panic!("{err}")
+    };
+    assert_eq!(*span, Some(ayml_core::Span::new(6, 7)));
+    assert!(location.is_none());
+}
+
+#[test]
+fn unrepresentable_values() {
+    assert!(to_string(&u64::MAX).is_err());
+    assert!(to_string(&(i128::from(i64::MAX) + 1)).is_err());
+    let mut m: HashMap<Option<i32>, i32> = HashMap::new();
+    m.insert(None, 1);
+    assert!(to_string(&m).is_err());
+    let mut m = HashMap::new();
+    m.insert(vec![1], 1);
+    assert!(to_string(&m).is_err());
+}
+
+#[test]
+fn duplicate_keys_after_key_conversion() {
+    struct Dup;
+    impl Serialize for Dup {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::SerializeMap;
+            let mut m = s.serialize_map(Some(2))?;
+            m.serialize_entry(&1, &"a")?;
+            m.serialize_entry("1", &"b")?;
+            m.end()
+        }
     }
-    assert!(from_str::<Color>("Purple").is_err());
-}
-
-// ── Tabs for indentation ────────────────────────────────────────
-
-#[test]
-fn error_tab_indentation() {
-    use serde::Deserialize;
-    #[derive(Deserialize)]
-    struct S {
-        #[allow(dead_code)]
-        a: i32,
-    }
-    assert!(from_str::<S>("a: 1\n\tb: 2").is_err());
-}
-
-// ── from_reader errors ──────────────────────────────────────────
-
-#[test]
-fn error_from_reader_invalid_utf8() {
-    let data: &[u8] = &[0xFF, 0xFE];
-    assert!(ayml::from_reader::<_, String>(data).is_err());
+    let err = to_string(&Dup).unwrap_err();
+    assert!(err.to_string().contains("duplicate"), "{err}");
 }

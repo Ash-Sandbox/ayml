@@ -1,234 +1,209 @@
-use ayml_core::{
-    error::ErrorKind,
-    parse, parse_with_max_depth,
-    value::{MapKey, Value},
-};
+//! Error kinds, messages, locations, and limits.
+
+mod common;
+
+use ayml_core::{DEFAULT_MAX_DEPTH, ErrorKind, Location, Span, parse, parse_with_max_depth};
+use common::{err, ok};
 
 #[test]
-fn duplicate_key() {
-    let input = "a: 1\na: 2";
-    let err = parse(input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::DuplicateKey(_)));
-}
-
-#[test]
-fn null_mapping_key() {
-    let input = "null: value";
-    let err = parse(input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::NullKey));
-}
-
-#[test]
-fn float_mapping_key() {
-    let input = "3.14: value";
-    let err = parse(input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::FloatKey));
-}
-
-#[test]
-fn invalid_escape_in_double_quoted() {
-    let input = r#"s: "\q""#;
-    let err = parse(input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::InvalidEscape(_)));
-}
-
-#[test]
-fn line_continuation_in_triple_quoted() {
-    // `\` at end of line suppresses the line break, joining the next line
-    let input = "s: \"\"\"\n  hello \\\n  world\n  \"\"\"";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
+fn display_includes_line_and_column() {
+    let e = err("a: 1\nb: \"\\q\"\n");
     assert_eq!(
-        map[&MapKey::String("s".into())].value,
-        Value::Str("hello world".into())
+        e.to_string(),
+        "2:5: invalid escape sequence: unknown escape `\\q`"
+    );
+    assert_eq!((e.line(), e.column()), (2, 5));
+}
+
+#[test]
+fn columns_count_characters_not_bytes() {
+    let e = err("héllo: wörld#x\n");
+    assert_eq!(
+        e.location,
+        Location {
+            line: 1,
+            column: 13
+        }
+    );
+    let e = err("k: \"☺☺\\q\"");
+    assert_eq!(e.column(), 7);
+}
+
+#[test]
+fn lines_count_cr_lf_and_crlf() {
+    assert_eq!(err("a: 1\r\nb: 1\rc: 1\nd: \"\\q\"").line(), 4);
+    assert_eq!(err("a: 1\r\n\r\nb: 9223372036854775808").line(), 3);
+}
+
+#[test]
+fn error_spans_point_into_input() {
+    let input = "a: 1\nb: 0x8000000000000000\n";
+    let e = err(input);
+    assert_eq!(e.kind, ErrorKind::IntegerOverflow);
+    assert_eq!(&input[e.span.start..e.span.end], "0x8000000000000000");
+}
+
+#[test]
+fn duplicate_key_span_is_the_second_key() {
+    let input = "name: a\n\"name\": b\n";
+    let e = err(input);
+    assert_eq!(e.kind, ErrorKind::DuplicateKey("name".into()));
+    assert_eq!(e.span, Span::new(8, 14));
+    assert_eq!(e.location, Location { line: 2, column: 1 });
+}
+
+#[test]
+fn messages_explain_common_mistakes() {
+    let cases = [
+        ("password: abc#123", "quote the string"),
+        ("k: 'v'", "use double quotes"),
+        (
+            "a:\n  b",
+            "write scalars and flow collections on the same line",
+        ),
+        ("a:\nb: 1", "write `null`"),
+        ("- a\n-", "write `null`"),
+        ("a: b\n  c", "use a triple-quoted string"),
+        ("a: b: c", "a nested mapping must start on a new line"),
+        ("{a:1}", "must be followed by a space"),
+        ("\"a\nb\"", "use a triple-quoted string for multiple lines"),
+        ("k: \"\"\"x\n\"\"\"", "must start on the line after"),
+    ];
+    for (input, hint) in cases {
+        let message = err(input).to_string();
+        assert!(
+            message.contains(hint),
+            "{input:?}: {message:?} lacks {hint:?}"
+        );
+    }
+}
+
+#[test]
+fn byte_order_mark_is_rejected() {
+    let e = err("\u{FEFF}a: 1");
+    assert_eq!(e.kind, ErrorKind::ByteOrderMark);
+    assert_eq!(e.location, Location { line: 1, column: 1 });
+}
+
+#[test]
+fn byte_order_mark_inside_a_string_is_allowed() {
+    assert!(parse("a: x\u{FEFF}y").is_ok());
+}
+
+#[test]
+fn non_printable_characters_are_rejected_everywhere() {
+    for (input, ch) in [
+        ("a: x\u{0}y", '\u{0}'),
+        ("a: \"\u{7}\"", '\u{7}'),
+        ("a: 1 # \u{1B}[0m", '\u{1B}'),
+        ("# \u{7F}\na: 1", '\u{7F}'),
+        ("a\u{C}b: 1", '\u{C}'),
+        ("a: \"\"\"\n  \u{80}\n  \"\"\"", '\u{80}'),
+        ("a: \u{FFFE}", '\u{FFFE}'),
+    ] {
+        assert_eq!(err(input).kind, ErrorKind::NonPrintable(ch), "{input:?}");
+    }
+}
+
+#[test]
+fn printable_unusual_characters_are_allowed() {
+    assert!(parse("a: x\u{85}y # \u{2028}").is_ok());
+    assert!(parse("a: \u{A0}x").is_ok());
+}
+
+#[test]
+fn tabs_in_indentation() {
+    for input in [
+        "a:\n\tb: 1",
+        "a:\n  \tb: 1",
+        "\ta: 1",
+        "- a\n\t- b",
+        "a: 1\n \t# c",
+    ] {
+        assert_eq!(err(input).kind, ErrorKind::TabIndent, "{input:?}");
+    }
+}
+
+#[test]
+fn tabs_on_blank_lines_are_allowed() {
+    assert!(parse("a: 1\n\t\n \t \nb: 2").is_ok());
+}
+
+#[test]
+fn unexpected_end_of_input() {
+    for input in ["\"abc", "[1, 2", "{a: 1", "k: \"\"\"\n  x"] {
+        assert!(
+            matches!(err(input).kind, ErrorKind::UnexpectedEof(_)),
+            "{input:?}"
+        );
+    }
+}
+
+#[test]
+fn empty_document() {
+    assert_eq!(err("").kind, ErrorKind::EmptyDocument);
+    assert_eq!(
+        err("# only\n").to_string(),
+        "2:1: document is empty (expected a root value)"
     );
 }
 
 #[test]
-fn backslash_eof_in_triple_quoted_is_error() {
-    // A lone `\` followed immediately by EOF (malformed — no closing `"""`)
-    let input = "s: \"\"\"\n  hello\\";
-    let err = parse(input).unwrap_err();
-    // Should error (unclosed triple-quote), not silently emit a backslash
-    assert!(matches!(
-        err.kind,
-        ErrorKind::UnexpectedEof | ErrorKind::Expected(_)
-    ),);
+fn default_depth_limit() {
+    let depth = DEFAULT_MAX_DEPTH;
+    let at_limit = format!("{}1{}", "[".repeat(depth), "]".repeat(depth));
+    assert!(parse(&at_limit).is_ok());
+    let over = format!("{}1{}", "[".repeat(depth + 1), "]".repeat(depth + 1));
+    assert_eq!(err(&over).kind, ErrorKind::RecursionLimit);
 }
 
 #[test]
-fn unclosed_double_quote() {
-    let input = r#"s: "hello"#;
-    let err = parse(input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::UnexpectedEof));
-}
-
-#[test]
-fn unclosed_flow_sequence() {
-    let input = "items: [a, b";
-    let err = parse(input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::Expected(_)));
-}
-
-#[test]
-fn unclosed_flow_mapping() {
-    let input = "m: {a: 1";
-    let err = parse(input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::Expected(_)));
-}
-
-#[test]
-fn bom_rejected() {
-    let input = "\u{FEFF}key: value";
-    let err = parse(input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::ByteOrderMark));
-}
-
-#[test]
-fn deeply_nested_flow_sequences_rejected() {
-    // 200 nested opening brackets — well past the default limit of 128.
-    let input: String = "[".repeat(200) + &"]".repeat(200);
-    let err = parse(&input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::RecursionLimit));
-}
-
-#[test]
-fn deeply_nested_flow_mappings_rejected() {
-    // {a: {a: {a: ... }}}
-    let mut input = String::new();
-    for _ in 0..200 {
-        input.push_str("{a: ");
+fn depth_limit_applies_to_every_collection_kind() {
+    let n = DEFAULT_MAX_DEPTH + 1;
+    let flow_map = format!("{}1{}", "{a: ".repeat(n), "}".repeat(n));
+    let compact = format!("{}x", "- ".repeat(n));
+    let mut block = String::new();
+    for i in 0..n {
+        block.push_str(&" ".repeat(i));
+        block.push_str("k:\n");
     }
-    input.push('1');
-    for _ in 0..200 {
-        input.push('}');
+    block.push_str(&" ".repeat(n));
+    block.push_str("k: 1");
+    for input in [flow_map, compact, block] {
+        assert_eq!(err(&input).kind, ErrorKind::RecursionLimit);
     }
-    let err = parse(&input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::RecursionLimit));
 }
 
 #[test]
-fn deeply_nested_block_mappings_rejected() {
-    // a:\n  b:\n    c:\n ... (200 levels deep)
-    let mut input = String::new();
-    for i in 0..200 {
-        for _ in 0..(i * 2) {
-            input.push(' ');
-        }
-        input.push_str(&format!("k{i}:\n"));
-    }
-    for _ in 0..(200 * 2) {
-        input.push(' ');
-    }
-    input.push('1');
-    let err = parse(&input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::RecursionLimit));
+fn deep_nesting_beyond_limit_does_not_overflow_the_stack() {
+    let input = "[".repeat(100_000);
+    assert_eq!(err(&input).kind, ErrorKind::RecursionLimit);
 }
 
 #[test]
-fn custom_max_depth_is_respected() {
-    // 5 levels of nesting: [[[[[ 1 ]]]]]
-    let input = "[".repeat(5) + "1" + &"]".repeat(5);
-    // Limit of 4 should reject it.
-    let err = parse_with_max_depth(&input, 4).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::RecursionLimit));
-    // Limit of 10 should accept it.
-    let node = parse_with_max_depth(&input, 10).unwrap();
-    assert!(node.value.as_sequence().is_some());
+fn custom_depth_limit() {
+    assert!(parse_with_max_depth("[[1]]", 2).is_ok());
+    let e = parse_with_max_depth("[[[1]]]", 2).unwrap_err();
+    assert_eq!(e.kind, ErrorKind::RecursionLimit);
+    assert!(parse_with_max_depth("a:\n  b: 1", 2).is_ok());
+    assert!(parse_with_max_depth("a:\n  b:\n    c: 1", 2).is_err());
+    assert!(parse_with_max_depth("42", 0).is_ok());
+    assert!(parse_with_max_depth("[]", 0).is_err());
 }
 
 #[test]
-fn moderate_nesting_within_default_limit_ok() {
-    // 50 levels — well within the default 128.
-    let input = "[".repeat(50) + "1" + &"]".repeat(50);
-    let node = parse(&input).unwrap();
-    assert!(node.value.as_sequence().is_some());
+fn moderate_nesting_is_fine() {
+    let input = format!("{}1{}", "[".repeat(50), "]".repeat(50));
+    assert!(ok(&input).value.is_collection());
 }
 
 #[test]
-fn error_has_line_column() {
-    let input = "a: 1\nb: 2\na: 3";
-    let err = parse(input).unwrap_err();
-    // The duplicate key error should have a meaningful line/column
-    assert!(err.line >= 1);
-    assert!(err.column >= 1);
-}
-
-#[test]
-fn tab_indent_in_mapping_value() {
-    let input = "outer:\n\tinner: 1";
-    let err = parse(input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::TabIndent));
-    assert_eq!(err.line, 2);
-    assert_eq!(err.column, 1);
-}
-
-#[test]
-fn tab_indent_in_sequence() {
-    let input = "items:\n\t- one";
-    let err = parse(input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::TabIndent));
-}
-
-#[test]
-fn tab_indent_at_top_level() {
-    let input = "\tkey: val";
-    let err = parse(input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::TabIndent));
-}
-
-#[test]
-fn tab_after_spaces_in_indent() {
-    let input = "outer:\n  \tinner: 1";
-    let err = parse(input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::TabIndent));
-}
-
-// ── Non-printable character rejection ────────────────────────────
-
-#[test]
-fn null_byte_in_bare_string_rejected() {
-    let input = "key: hel\x00lo";
-    let err = parse(input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::NonPrintable('\x00')));
-}
-
-#[test]
-fn form_feed_in_bare_string_rejected() {
-    let input = "key: hel\x0Clo";
-    let err = parse(input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::NonPrintable('\x0C')));
-}
-
-#[test]
-fn bel_in_bare_string_rejected() {
-    let input = "key: hel\x07lo";
-    let err = parse(input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::NonPrintable('\x07')));
-}
-
-// ── Deeply nested block sequences ────────────────────────────────
-
-#[test]
-fn deeply_nested_block_sequences_rejected() {
-    // Nested via seq-in-mapping-in-seq pattern:
-    // - s:
-    //   - s:
-    //     - s:
-    //       ...
-    let mut input = String::new();
-    for i in 0..200 {
-        let indent = i * 2;
-        for _ in 0..indent {
-            input.push(' ');
-        }
-        input.push_str("- s:\n");
-    }
-    let indent = 200 * 2;
-    for _ in 0..indent {
-        input.push(' ');
-    }
-    input.push_str("- 1");
-    let err = parse(&input).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::RecursionLimit));
+fn location_of_offsets() {
+    let text = "ab\r\ncd\ref\ngh";
+    assert_eq!(Location::of(text, 0), Location { line: 1, column: 1 });
+    assert_eq!(Location::of(text, 4), Location { line: 2, column: 1 });
+    assert_eq!(Location::of(text, 7), Location { line: 3, column: 1 });
+    assert_eq!(Location::of(text, 10), Location { line: 4, column: 1 });
+    assert_eq!(Location::of(text, 999), Location { line: 4, column: 3 });
+    assert_eq!(Location::of("é", 1), Location { line: 1, column: 1 });
 }

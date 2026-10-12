@@ -1,4 +1,6 @@
-use ayml::value::Value;
+use std::fmt::Write as _;
+
+use ayml::Value;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use serde::{Deserialize, Serialize};
 
@@ -118,12 +120,13 @@ struct Article {
 fn make_large_ayml() -> String {
     let mut s = String::new();
     for i in 0..50 {
-        s.push_str(&format!(
+        let _ = write!(
+            s,
             "- id: {i}\n  name: user-{i}\n  email: user-{i}@example.com\n  score: {}.{}\n  active: {}\n",
             i * 17 % 100,
             i * 31 % 100,
             i % 2 == 0,
-        ));
+        );
     }
     s
 }

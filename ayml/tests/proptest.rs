@@ -1,270 +1,341 @@
-//! Property-based tests for ayml roundtrip and robustness.
+//! Property tests for the serde layer.
+//!
+//! * Typed values are round-tripped correctly
+//! * Untyped values are round-tripped correctly
+//! * comments on `Commented<T>` fields are round-tripped correctly
+//! * JSON values are round-tripped correctly
+//! * deserialization errors contain locations
+//! * malformed input does not cause a panic
 
-use ayml::{from_str, to_string, value::Value};
-use indexmap::IndexMap;
+use std::collections::BTreeMap;
+
+use ayml::{Commented, Node, Value};
+use ayml_testgen::config;
+use ayml_testgen::mutate::arb_mutated_doc;
+use ayml_testgen::render::arb_doc;
+use ayml_testgen::strings::{arb_comment, arb_comment_line, arb_f64, arb_i64, arb_key, arb_string};
+use ayml_testgen::tree::{arb_plain_node, diff_values_only};
 use proptest::prelude::*;
+use proptest_derive::Arbitrary;
+use serde::{Deserialize, Serialize};
 
-// ── Generators ───────────────────────────────────────────────────
-
-/// Generate a random printable Unicode character, including non-ASCII.
-fn arb_unicode_char() -> impl Strategy<Value = char> {
-    // Sample from interesting Unicode ranges, excluding surrogates and
-    // non-characters.
-    prop_oneof![
-        // Basic Latin (ASCII printable)
-        (0x20_u32..=0x7E_u32),
-        // Latin-1 Supplement (accented characters, symbols)
-        (0xA0_u32..=0xFF_u32),
-        // Latin Extended-A (Ā-ſ)
-        (0x100_u32..=0x17F_u32),
-        // Greek and Coptic
-        (0x370_u32..=0x3FF_u32),
-        // Cyrillic
-        (0x400_u32..=0x4FF_u32),
-        // Arabic
-        (0x600_u32..=0x6FF_u32),
-        // Devanagari
-        (0x900_u32..=0x97F_u32),
-        // CJK Unified Ideographs (subset)
-        (0x4E00_u32..=0x9FFF_u32),
-        // Hiragana
-        (0x3040_u32..=0x309F_u32),
-        // Katakana
-        (0x30A0_u32..=0x30FF_u32),
-        // Hangul Syllables (subset)
-        (0xAC00_u32..=0xD7A3_u32),
-        // Emoji (Miscellaneous Symbols and Pictographs)
-        (0x1F300_u32..=0x1F5FF_u32),
-        // Emoticons
-        (0x1F600_u32..=0x1F64F_u32),
-    ]
-    .prop_filter_map("valid char", char::from_u32)
+fn finite_f64() -> impl Strategy<Value = f64> {
+    arb_f64().prop_filter("finite", |f| f.is_finite())
 }
 
-/// Generate a random Unicode string of 1..=max_len printable characters.
-fn arb_unicode_string(max_len: usize) -> impl Strategy<Value = String> {
-    prop::collection::vec(arb_unicode_char(), 1..=max_len)
-        .prop_map(|chars| chars.into_iter().collect())
+fn finite_f32() -> impl Strategy<Value = f32> {
+    any::<f32>().prop_filter("finite", |f| f.is_finite())
 }
 
-/// Map keys: valid AYML mapping keys that roundtrip through serde's
-/// HashMap<String, _>.
-fn arb_map_key() -> impl Strategy<Value = String> {
-    prop_oneof![
-        2 => "[a-zA-Z_][a-zA-Z0-9_]{0,15}",
-        2 => arb_unicode_string(16),
-        // Keys that need quoting
-        1 => Just(String::new()),
-        1 => Just("null".into()),
-        1 => Just("true".into()),
-        1 => Just("false".into()),
-        1 => Just("42".into()),
-        1 => Just("with: colon".into()),
-        1 => Just("has #hash".into()),
-        1 => Just("back\\slash".into()),
-    ]
+fn string_map() -> impl Strategy<Value = BTreeMap<String, i64>> {
+    prop::collection::btree_map(arb_key(), arb_i64(), 0..4)
 }
 
-/// Scalar strings covering bare, quoted, and special cases.
-fn arb_scalar_string() -> impl Strategy<Value = String> {
-    prop_oneof![
-        // Simple alphanumeric
-        2 => "[a-zA-Z][a-zA-Z0-9 _-]{0,30}",
-        // Strings containing special chars that force quoting
-        1 => "[a-zA-Z0-9 :{}\\[\\]#,]{1,20}",
-        // Random Unicode strings
-        3 => arb_unicode_string(30),
-        // Empty string
-        1 => Just(String::new()),
-        // Reserved words
-        1 => Just("null".into()),
-        1 => Just("true".into()),
-        1 => Just("false".into()),
-        1 => Just("inf".into()),
-        1 => Just("+inf".into()),
-        1 => Just("-inf".into()),
-        1 => Just("nan".into()),
-        // Numeric-looking
-        1 => Just("42".into()),
-        1 => Just("3.25".into()),
-        1 => Just("-7".into()),
-        // Strings with control characters
-        1 => Just("tab\there".into()),
-        1 => Just("cr\rhere".into()),
-        1 => Just("newline\nhere".into()),
-        // Trailing newline edge cases
-        1 => Just("trailing newline\n".into()),
-        1 => Just("end\n\n".into()),
-        1 => Just("\n".into()),
-        1 => Just("a\nb\n".into()),
-        // Leading/trailing whitespace
-        1 => Just(" leading".into()),
-        1 => Just("trailing ".into()),
-        1 => Just(" both ".into()),
-        // Dash-space prefix
-        1 => Just("- item".into()),
-        1 => Just("- ".into()),
-    ]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Arbitrary)]
+struct Marker;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Arbitrary)]
+struct Meters(#[proptest(strategy = "finite_f64()")] f64);
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Arbitrary)]
+struct Pair(i32, #[proptest(strategy = "arb_string()")] String);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Arbitrary)]
+enum Color {
+    Red,
+    Green,
+    #[serde(rename = "true")]
+    True,
 }
 
-/// Generate a random Value tree with bounded depth.
-fn arb_value(depth: u32) -> impl Strategy<Value = Value> {
-    let leaf = prop_oneof![
-        Just(Value::Null),
-        any::<bool>().prop_map(Value::Bool),
-        prop_oneof![any::<i64>(), Just(i64::MIN), Just(i64::MAX), Just(0_i64),]
-            .prop_map(Value::Int),
-        // Finite, non-subnormal floats that roundtrip cleanly via ryu
-        (-1e15_f64..1e15_f64)
-            .prop_filter("finite and normal", |f| f.is_finite())
-            .prop_map(|f| Value::Float((f * 1e6).round() / 1e6)),
-        prop_oneof![
-            Just(Value::Float(f64::INFINITY)),
-            Just(Value::Float(f64::NEG_INFINITY)),
-            Just(Value::Float(f64::NAN)),
-            Just(Value::Float(0.0)),
-            Just(Value::Float(1.0)),
-            Just(Value::Float(-1.0)),
-            Just(Value::Float(1e20)),
-            Just(Value::Float(-1e20)),
-        ],
-        arb_scalar_string().prop_map(Value::Str),
-    ];
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Arbitrary)]
+enum Shape {
+    Empty,
+    Circle(#[proptest(strategy = "finite_f64()")] f64),
+    Label(#[proptest(strategy = "arb_string()")] String),
+    Move(i32, i32),
+    Rect {
+        w: u32,
+        h: u32,
+        #[proptest(strategy = "proptest::option::of(arb_string())")]
+        label: Option<String>,
+    },
+    Many(Vec<Pair>),
+}
 
-    if depth == 0 {
-        leaf.boxed()
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Arbitrary)]
+struct Inner {
+    #[proptest(strategy = "arb_string()")]
+    name: String,
+    #[proptest(strategy = "proptest::option::of(arb_i64())")]
+    count: Option<i64>,
+    #[proptest(strategy = "prop::collection::vec(arb_string(), 0..3)")]
+    tags: Vec<String>,
+}
+
+/// Every serde data model shape.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Arbitrary)]
+struct Everything {
+    b: bool,
+    i8: i8,
+    i16: i16,
+    i32: i32,
+    i64: i64,
+    #[proptest(strategy = "i128::from(i64::MIN)..=i128::from(i64::MAX)")]
+    i128: i128,
+    u8: u8,
+    u16: u16,
+    u32: u32,
+    #[proptest(strategy = "0..=(i64::MAX as u64)")]
+    u64: u64,
+    #[proptest(strategy = "finite_f32()")]
+    f32: f32,
+    #[proptest(strategy = "finite_f64()")]
+    f64: f64,
+    ch: char,
+    #[proptest(strategy = "arb_string()")]
+    s: String,
+    #[proptest(strategy = "proptest::option::of(arb_string())")]
+    opt: Option<String>,
+    unit: (),
+    marker: Marker,
+    meters: Meters,
+    pair: Pair,
+    tuple: (i8, bool, Color),
+    array: [u8; 3],
+    #[proptest(
+        strategy = "prop::collection::vec(prop::collection::vec(arb_string(), 0..3), 0..3)"
+    )]
+    nested: Vec<Vec<String>>,
+    #[proptest(strategy = "string_map()")]
+    map: BTreeMap<String, i64>,
+    int_keys: BTreeMap<i32, bool>,
+    bool_keys: BTreeMap<bool, u8>,
+    enum_keys: BTreeMap<Color, i16>,
+    shapes: Vec<Shape>,
+    inner: Inner,
+    maybe_inner: Option<Inner>,
+    #[proptest(
+        strategy = "prop::collection::vec(any::<u8>(), 0..5).prop_map(serde_bytes::ByteBuf::from)"
+    )]
+    bytes: serde_bytes::ByteBuf,
+}
+
+fn commented<T: std::fmt::Debug + Clone>(
+    value: impl Strategy<Value = T>,
+    trailing: bool,
+) -> impl Strategy<Value = Commented<T>> {
+    let trailing = if trailing {
+        arb_comment().boxed()
     } else {
-        prop_oneof![
-            4 => leaf,
-            // Sequences of 0..5 elements
-            1 => prop::collection::vec(arb_value(depth - 1), 0..5)
-                .prop_map(Value::Seq),
-            // Mappings of 0..5 entries (String keys for serde HashMap)
-            1 => prop::collection::vec(
-                    (arb_map_key(), arb_value(depth - 1)),
-                    0..5
-                )
-                .prop_map(|entries| {
-                    let map: IndexMap<String, Value> = entries.into_iter().collect();
-                    Value::Map(map)
-                }),
-        ]
-        .boxed()
+        Just(None).boxed()
+    };
+    (
+        arb_comment(),
+        proptest::option::of(arb_comment_line()),
+        trailing,
+        value,
+    )
+        .prop_map(
+            |(comment, inline_comment, trailing_comment, value)| Commented {
+                comment,
+                inline_comment,
+                trailing_comment,
+                value,
+            },
+        )
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Arbitrary)]
+struct CommentedConfig {
+    #[proptest(strategy = "commented(any::<u16>(), false)")]
+    port: Commented<u16>,
+    #[proptest(strategy = "commented(arb_string(), false)")]
+    host: Commented<String>,
+    #[proptest(
+        strategy = "commented(prop::collection::vec(commented(arb_string(), false), 0..4), true)"
+    )]
+    tags: Commented<Vec<Commented<String>>>,
+    #[proptest(strategy = "commented(any::<Inner>(), true)")]
+    inner: Commented<Inner>,
+    #[proptest(strategy = "prop::collection::vec(any::<Rule>(), 0..3)")]
+    rules: Vec<Rule>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Arbitrary)]
+struct Rule {
+    #[proptest(strategy = "commented(arb_string(), false)")]
+    host: Commented<String>,
+    port: u16,
+}
+
+fn node_to_value(node: &Node) -> Value {
+    Value::from(node)
+}
+
+fn values_equal_strict(a: &Value, b: &Value) -> Result<(), TestCaseError> {
+    match diff_values_only(&Node::from(a), &Node::from(b)) {
+        None => Ok(()),
+        Some(d) => Err(TestCaseError::fail(d)),
     }
 }
-
-// ── Property tests ───────────────────────────────────────────────
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(10_000))]
+    #![proptest_config(config(1000))]
 
-    /// Serialize a random Value tree, deserialize it back, and verify equality.
     #[test]
-    fn serde_round_trip(value in arb_value(4)) {
-        let serialized = to_string(&value).map_err(|e| {
-            TestCaseError::fail(format!(
-                "serialize failed: {e}\n--- value ---\n{value:?}"
-            ))
-        })?;
-
-        let deserialized: Value = from_str(&serialized).map_err(|e| {
-            TestCaseError::fail(format!(
-                "deserialize failed: {e}\n--- serialized ---\n{serialized}--- value ---\n{value:?}"
-            ))
-        })?;
-
-        prop_assert!(
-            value == deserialized,
-            "values differ\n--- original ---\n{:?}\n--- serialized ---\n{}\n--- deserialized ---\n{:?}",
-            value,
-            serialized,
-            deserialized,
-        );
+    fn typed_round_trip(value in any::<Everything>()) {
+        let text = ayml::to_string(&value).map_err(|e| TestCaseError::fail(e.to_string()))?;
+        let back: Everything = ayml::from_str(&text)
+            .map_err(|e| TestCaseError::fail(format!("{e}\n--- text ---\n{text}")))?;
+        prop_assert_eq!(&value, &back, "\n--- text ---\n{}", text);
     }
 
-    /// Ensure from_str never panics on arbitrary input.
     #[test]
-    fn deserializer_no_panic(input in "[\\s\\S]{0,200}") {
-        let _ = from_str::<Value>(&input);
+    fn serde_layer_matches_core(value in any::<Everything>()) {
+        let node = ayml::to_node(&value).unwrap();
+        let text = ayml::to_string(&value).unwrap();
+        prop_assert_eq!(&text, &ayml_core::emit(&node));
+        let parsed = ayml_core::parse(&text).unwrap();
+        prop_assert_eq!(ayml::from_node::<Everything>(&parsed).unwrap(), value);
     }
 
-    /// Ensure to_string never panics on arbitrary Value trees.
     #[test]
-    fn serializer_no_panic(value in arb_value(3)) {
-        let _ = to_string(&value);
+    fn value_round_trip(node in arb_plain_node()) {
+        let value = node_to_value(&node);
+        let text = ayml::to_string(&value).unwrap();
+        let back: Value = ayml::from_str(&text)
+            .map_err(|e| TestCaseError::fail(format!("{e}\n--- text ---\n{text}")))?;
+        values_equal_strict(&value, &back)?;
     }
 
-    /// Multi-line strings roundtrip through triple-quoted serialization.
     #[test]
-    fn multiline_string_roundtrip(
-        lines in prop::collection::vec("[a-zA-Z0-9 .!?]{0,40}", 1..6),
+    fn value_display_is_flow_ayml(node in arb_plain_node()) {
+        let value = node_to_value(&node);
+        let shown = value.to_string();
+        prop_assert!(!shown.contains('\n') && !shown.contains('\r'));
+        let back: Value = ayml::from_str(&shown)
+            .map_err(|e| TestCaseError::fail(format!("{e}\n--- display ---\n{shown}")))?;
+        values_equal_strict(&value, &back)?;
+    }
+
+    #[test]
+    fn value_agrees_with_core(doc in arb_doc()) {
+        let value: Value = ayml::from_str(&doc.text)
+            .map_err(|e| TestCaseError::fail(format!("{e}\n--- text ---\n{}", doc.text)))?;
+        values_equal_strict(&node_to_value(&doc.expected), &value)?;
+    }
+
+    #[test]
+    fn commented_round_trip(config in any::<CommentedConfig>()) {
+        let text = ayml::to_string(&config).unwrap();
+        let back: CommentedConfig = ayml::from_str(&text)
+            .map_err(|e| TestCaseError::fail(format!("{e}\n--- text ---\n{text}")))?;
+        prop_assert_eq!(&config, &back, "\n--- text ---\n{}", text);
+    }
+
+    #[test]
+    fn json_round_trip(json in arb_json()) {
+        let text = ayml::to_string(&json).unwrap();
+        let back: serde_json::Value = ayml::from_str(&text)
+            .map_err(|e| TestCaseError::fail(format!("{e}\n--- text ---\n{text}")))?;
+        prop_assert_eq!(&json, &back, "\n--- text ---\n{}", text);
+    }
+
+    #[test]
+    fn errors_point_at_the_offending_value(
+        keys in prop::collection::btree_set("[a-z]{1,6}", 1..6),
+        bad in any::<prop::sample::Index>(),
+        bad_value in prop_oneof![Just("\"80\""), Just("1.5"), Just("true"), Just("[1]"), Just("null"), Just("-1"), Just("70000")],
     ) {
-        let s = lines.join("\n");
-        let serialized = to_string(&s).unwrap();
-        let deserialized: String = from_str(&serialized).unwrap();
-        prop_assert_eq!(s, deserialized);
+        let keys: Vec<String> = keys.into_iter().collect();
+        let bad = bad.index(keys.len());
+        let text: String = keys
+            .iter()
+            .enumerate()
+            .map(|(i, k)| if i == bad { format!("{k}: {bad_value}\n") } else { format!("{k}: 1\n") })
+            .collect();
+        let err = ayml::from_str::<BTreeMap<String, u16>>(&text).unwrap_err();
+        let location = err.location().expect("location");
+        prop_assert_eq!(location.line, bad + 1, "{}", err);
+        prop_assert_eq!(location.column, keys[bad].len() + 3, "{}", err);
     }
 
-    /// Option<i64> roundtrips through flow sequences (covers null before `,`/`]`).
     #[test]
-    fn option_in_flow_seq_roundtrip(
-        vals in prop::collection::vec(
-            prop_oneof![Just(None), any::<i64>().prop_map(Some)],
-            0..6,
-        )
-    ) {
-        let serialized = to_string(&vals).unwrap();
-        let deserialized: Vec<Option<i64>> = from_str(&serialized).unwrap();
-        prop_assert_eq!(vals, deserialized);
+    fn streaming_matches_tree(text in prop_oneof![
+        arb_doc().prop_map(|d| d.text),
+        arb_mutated_doc(),
+    ]) {
+        let streamed = ayml::from_str::<Value>(&text);
+        match ayml_core::parse(&text) {
+            Ok(tree) => {
+                let from_tree = ayml::from_node::<Value>(&tree).unwrap();
+                let streamed = streamed.map_err(|e| TestCaseError::fail(format!("{e}\n{text:?}")))?;
+                values_equal_strict(&from_tree, &streamed)?;
+            }
+            Err(e) => {
+                let streamed_err = streamed.err().map(|e| e.to_string());
+                prop_assert_eq!(streamed_err, Some(e.to_string()), "{:?}", text);
+            }
+        }
     }
 
-    /// Strings that Rust's f64::parse accepts but are NOT valid AYML floats
-    /// should round-trip as bare strings (not quoted) via Value Display.
     #[test]
-    fn non_ayml_float_strings_not_over_quoted(
-        s in prop_oneof![
-            Just(String::from("infinity")),
-            Just(String::from("Infinity")),
-            Just(String::from("INFINITY")),
-            Just(String::from("NaN")),
-            Just(String::from("NAN")),
-            Just(String::from(".5")),
-            Just(String::from("5.")),
-            Just(String::from(".1e2")),
-            Just(String::from("1.")),
-            Just(String::from("1.e5")),
+    fn typed_streaming_matches_tree(config in any::<CommentedConfig>(), value in any::<Everything>()) {
+        let text = ayml::to_string(&config).unwrap();
+        let tree = ayml_core::parse(&text).unwrap();
+        prop_assert_eq!(ayml::from_str::<CommentedConfig>(&text).unwrap(), ayml::from_node::<CommentedConfig>(&tree).unwrap());
+        let text = ayml::to_string(&value).unwrap();
+        let tree = ayml_core::parse(&text).unwrap();
+        prop_assert_eq!(ayml::from_str::<Everything>(&text).unwrap(), ayml::from_node::<Everything>(&tree).unwrap());
+    }
+
+    #[test]
+    fn typed_errors_match_tree(text in arb_mutated_doc()) {
+        let streamed = ayml::from_str::<Everything>(&text).map(drop).map_err(|e| e.to_string());
+        let from_tree = ayml_core::parse(&text)
+            .map_err(|e| ayml::Error::from(e).to_string())
+            .and_then(|tree| ayml::from_node::<Everything>(&tree).map(drop).map_err(|e| e.to_string()));
+        prop_assert_eq!(streamed.is_ok(), from_tree.is_ok(), "{:?} vs {:?}", streamed, from_tree);
+    }
+
+    #[test]
+    fn mutated_documents_never_panic(text in arb_mutated_doc()) {
+        let _ = ayml::from_str::<Value>(&text);
+        let _ = ayml::from_str::<Everything>(&text);
+        let _ = ayml::from_str::<CommentedConfig>(&text);
+        let _ = ayml::from_str::<serde_json::Value>(&text);
+    }
+}
+
+fn arb_json() -> impl Strategy<Value = serde_json::Value> {
+    use serde_json::Value as J;
+    let leaf = prop_oneof![
+        Just(J::Null),
+        any::<bool>().prop_map(J::Bool),
+        arb_i64().prop_map(J::from),
+        finite_f64().prop_map(J::from),
+        arb_string().prop_map(J::String),
+    ];
+    leaf.prop_recursive(4, 32, 5, |inner| {
+        prop_oneof![
+            prop::collection::vec(inner.clone(), 0..5).prop_map(J::Array),
+            prop::collection::vec((arb_key(), inner), 0..5)
+                .prop_map(|entries| J::Object(entries.into_iter().collect())),
         ]
-    ) {
-        // These are parseable by Rust's f64::parse but are NOT AYML floats.
-        // They should NOT be considered numbers by AYML's display logic.
-        // When displayed as Value::Str, they should be bare (unquoted).
-        let v = Value::Str(s.clone());
-        let display = format!("{v}");
-        prop_assert!(
-            !display.starts_with('"'),
-            "\"{}\" is not an AYML number and should display bare, got: {}",
-            s,
-            display,
-        );
-    }
+    })
+}
 
-    /// Triple-quoted strings inside flow collections parse correctly via serde.
-    #[test]
-    fn triple_quoted_in_flow_collections_serde(
-        text in "[a-zA-Z0-9 ]{1,20}",
-        kind in 0..3u8,
-    ) {
-        let input = match kind {
-            0 => format!("[1, \"\"\"\n  {text}\n  \"\"\"]\n"),
-            1 => format!("{{a: \"\"\"\n  {text}\n  \"\"\"}}\n"),
-            _ => format!("{{a: \"\"\"\n  {text}\n  \"\"\", b: 1}}\n"),
-        };
-        let parsed: Result<serde_json::Value, _> = from_str(&input);
-        prop_assert!(
-            parsed.is_ok(),
-            "serde parse failed: {}\n--- input ---\n{}---",
-            parsed.unwrap_err(),
-            input,
-        );
+#[test]
+fn nan_and_infinity_round_trip_typed() {
+    for v in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.0] {
+        let back: f64 = ayml::from_str(&ayml::to_string(&v).unwrap()).unwrap();
+        if v.is_nan() {
+            assert!(back.is_nan());
+        } else {
+            assert_eq!(back.to_bits(), v.to_bits());
+        }
     }
+    let back: f32 = ayml::from_str(&ayml::to_string(&f32::NAN).unwrap()).unwrap();
+    assert!(back.is_nan());
 }

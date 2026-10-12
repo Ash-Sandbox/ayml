@@ -1,233 +1,147 @@
-use ayml_core::{
-    error::Span,
-    parse,
-    value::{MapKey, Value},
-};
+//! Node and key spans.
 
-// ── Helper ──────────────────────────────────────────────────────
+mod common;
 
-/// Assert that a node's span covers exactly the expected substring.
-fn assert_span_text(input: &str, span: Span, expected: &str) {
-    let actual = &input[span.start..span.end];
+use ayml_core::{Node, Span};
+use common::{get, items, ok};
+
+#[track_caller]
+fn text_of(input: &str, span: Span) -> &str {
+    &input[span.start..span.end]
+}
+
+#[track_caller]
+fn key_span(node: &Node, key: &str) -> Span {
+    node.value
+        .as_mapping()
+        .expect("mapping")
+        .get_key_value(key)
+        .expect("key")
+        .0
+        .span
+}
+
+#[test]
+fn bare_scalar_spans() {
+    for input in [
+        "hello world",
+        "null",
+        "true",
+        "-42",
+        "0x1F",
+        "3.25e2",
+        "nan",
+    ] {
+        assert_eq!(text_of(input, ok(input).span), input);
+    }
+}
+
+#[test]
+fn bare_scalar_span_excludes_trailing_whitespace_and_comment() {
+    let input = "k: value   # comment\n";
+    assert_eq!(text_of(input, get(&ok(input), "k").span), "value");
+}
+
+#[test]
+fn double_quoted_span_includes_quotes() {
+    let input = "k: \"a\\tb\"\n";
+    assert_eq!(text_of(input, get(&ok(input), "k").span), "\"a\\tb\"");
+}
+
+#[test]
+fn triple_quoted_span_includes_delimiters() {
+    let input = "k: \"\"\"\n  line\n  \"\"\" # c\n";
     assert_eq!(
-        actual, expected,
-        "span {}..{} is {:?}, expected {:?}",
-        span.start, span.end, actual, expected
+        text_of(input, get(&ok(input), "k").span),
+        "\"\"\"\n  line\n  \"\"\""
     );
 }
 
-// ── Scalars ─────────────────────────────────────────────────────
-
 #[test]
-fn bare_scalar_span() {
-    let input = "hello";
-    let node = parse(input).unwrap();
-    assert_span_text(input, node.span, "hello");
+fn key_spans() {
+    let input = "plain: 1\n\"quoted key\" : 2\n";
+    let root = ok(input);
+    assert_eq!(text_of(input, key_span(&root, "plain")), "plain");
+    assert_eq!(
+        text_of(input, key_span(&root, "quoted key")),
+        "\"quoted key\""
+    );
 }
 
 #[test]
-fn bare_null_span() {
-    let input = "null";
-    let node = parse(input).unwrap();
-    assert!(node.value.is_null());
-    assert_span_text(input, node.span, "null");
+fn flow_key_spans() {
+    let input = "{a: 1, \"b\": 2}";
+    let root = ok(input);
+    assert_eq!(text_of(input, key_span(&root, "a")), "a");
+    assert_eq!(text_of(input, key_span(&root, "b")), "\"b\"");
 }
 
 #[test]
-fn bare_bool_span() {
-    let input = "true";
-    let node = parse(input).unwrap();
-    assert_span_text(input, node.span, "true");
+fn block_mapping_span_runs_from_first_key_to_last_value() {
+    let input = "# lead\nname: John\nage: 30 # c\n# trailing\n";
+    let root = ok(input);
+    assert_eq!(text_of(input, root.span), "name: John\nage: 30");
+    assert_eq!(text_of(input, get(&root, "age").span), "30");
 }
 
 #[test]
-fn bare_integer_span() {
-    let input = "42";
-    let node = parse(input).unwrap();
-    assert_span_text(input, node.span, "42");
+fn nested_mapping_span() {
+    let input = "outer:\n  inner: 42\n  other: x\nnext: 1\n";
+    let root = ok(input);
+    assert_eq!(
+        text_of(input, get(&root, "outer").span),
+        "inner: 42\n  other: x"
+    );
 }
 
 #[test]
-fn bare_float_span() {
-    let input = "3.14";
-    let node = parse(input).unwrap();
-    assert_span_text(input, node.span, "3.14");
+fn block_sequence_spans() {
+    let input = "- apple\n- banana\n";
+    let root = ok(input);
+    assert_eq!(text_of(input, root.span), "- apple\n- banana");
+    let entries = items(&root);
+    assert_eq!(text_of(input, entries[0].span), "apple");
+    assert_eq!(text_of(input, entries[1].span), "banana");
 }
 
 #[test]
-fn double_quoted_span() {
-    let input = "\"hello world\"";
-    let node = parse(input).unwrap();
-    assert_span_text(input, node.span, "\"hello world\"");
+fn compact_collection_spans() {
+    let input = "- name: Widget\n  qty: 5\n- - a\n  - b\n";
+    let root = ok(input);
+    let entries = items(&root);
+    assert_eq!(text_of(input, entries[0].span), "name: Widget\n  qty: 5");
+    assert_eq!(text_of(input, get(&entries[0], "qty").span), "5");
+    assert_eq!(text_of(input, entries[1].span), "- a\n  - b");
 }
 
 #[test]
-fn triple_quoted_span() {
-    let input = "\"\"\"\n  line one\n  line two\n  \"\"\"";
-    let node = parse(input).unwrap();
-    assert_span_text(input, node.span, input);
-}
-
-// ── Mappings ────────────────────────────────────────────────────
-
-#[test]
-fn mapping_root_span() {
-    let input = "a: 1\nb: 2";
-    let node = parse(input).unwrap();
-    // Root span covers the entire document.
-    assert_span_text(input, node.span, input);
+fn flow_collection_spans() {
+    let input = "k: [1, {a: b}, \"c\"] # c\n";
+    let root = ok(input);
+    let seq = get(&root, "k");
+    assert_eq!(text_of(input, seq.span), "[1, {a: b}, \"c\"]");
+    let entries = items(seq);
+    assert_eq!(text_of(input, entries[0].span), "1");
+    assert_eq!(text_of(input, entries[1].span), "{a: b}");
+    assert_eq!(text_of(input, get(&entries[1], "a").span), "b");
+    assert_eq!(text_of(input, entries[2].span), "\"c\"");
 }
 
 #[test]
-fn mapping_value_spans() {
-    let input = "name: Alice\nage: 30";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-
-    let name = &map[&MapKey::String("name".into())];
-    assert_eq!(name.value, Value::Str("Alice".into()));
-    assert_span_text(input, name.span, "Alice");
-
-    let age = &map[&MapKey::String("age".into())];
-    assert_eq!(age.value, Value::Int(30));
-    assert_span_text(input, age.span, "30");
+fn multi_line_flow_span() {
+    let input = "k: {\n  a: 1,\n}\n";
+    assert_eq!(text_of(input, get(&ok(input), "k").span), "{\n  a: 1,\n}");
 }
 
 #[test]
-fn nested_mapping_value_span() {
-    let input = "outer:\n  inner: hello";
-    let node = parse(input).unwrap();
-    let outer_map = node.value.as_mapping().unwrap();
-    let inner_node = &outer_map[&MapKey::String("outer".into())];
-    let inner_map = inner_node.value.as_mapping().unwrap();
-    let hello = &inner_map[&MapKey::String("inner".into())];
-    assert_span_text(input, hello.span, "hello");
-}
-
-// ── Sequences ───────────────────────────────────────────────────
-
-#[test]
-fn sequence_root_span() {
-    let input = "- a\n- b\n- c";
-    let node = parse(input).unwrap();
-    assert_span_text(input, node.span, input);
+fn spans_are_byte_offsets_with_unicode() {
+    let input = "ключ: значение\n";
+    let root = ok(input);
+    assert_eq!(text_of(input, key_span(&root, "ключ")), "ключ");
+    assert_eq!(text_of(input, get(&root, "ключ").span), "значение");
 }
 
 #[test]
-fn sequence_element_spans() {
-    let input = "- foo\n- 42\n- true";
-    let node = parse(input).unwrap();
-    let seq = node.value.as_sequence().unwrap();
-
-    assert_eq!(seq[0].value, Value::Str("foo".into()));
-    assert_span_text(input, seq[0].span, "foo");
-
-    assert_eq!(seq[1].value, Value::Int(42));
-    assert_span_text(input, seq[1].span, "42");
-
-    assert_eq!(seq[2].value, Value::Bool(true));
-    assert_span_text(input, seq[2].span, "true");
-}
-
-// ── Flow Collections ────────────────────────────────────────────
-
-#[test]
-fn flow_sequence_span() {
-    let input = "[1, 2, 3]";
-    let node = parse(input).unwrap();
-    assert_span_text(input, node.span, "[1, 2, 3]");
-}
-
-#[test]
-fn flow_sequence_element_spans() {
-    let input = "[10, 20, 30]";
-    let node = parse(input).unwrap();
-    let seq = node.value.as_sequence().unwrap();
-    assert_span_text(input, seq[0].span, "10");
-    assert_span_text(input, seq[1].span, "20");
-    assert_span_text(input, seq[2].span, "30");
-}
-
-#[test]
-fn flow_mapping_span() {
-    let input = "{a: 1, b: 2}";
-    let node = parse(input).unwrap();
-    assert_span_text(input, node.span, "{a: 1, b: 2}");
-}
-
-#[test]
-fn flow_mapping_value_spans() {
-    let input = "{x: hello, y: 99}";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-
-    let x = &map[&MapKey::String("x".into())];
-    assert_span_text(input, x.span, "hello");
-
-    let y = &map[&MapKey::String("y".into())];
-    assert_span_text(input, y.span, "99");
-}
-
-// ── With Comments ───────────────────────────────────────────────
-
-#[test]
-fn span_with_leading_comment() {
-    let input = "# comment\nvalue: 42";
-    let node = parse(input).unwrap();
-    // The root node's span includes the comment.
-    assert_span_text(input, node.span, input);
-}
-
-#[test]
-fn span_with_inline_comment() {
-    let input = "port: 8080 # default";
-    let node = parse(input).unwrap();
-    let map = node.value.as_mapping().unwrap();
-    let port = &map[&MapKey::String("port".into())];
-    // The value span covers just the value, not the comment.
-    assert_span_text(input, port.span, "8080");
-}
-
-// ── Compact Mapping in Sequence ─────────────────────────────────
-
-#[test]
-fn compact_mapping_span() {
-    let input = "- name: Alice\n  age: 30";
-    let node = parse(input).unwrap();
-    let seq = node.value.as_sequence().unwrap();
-    // The compact mapping node should span both entries.
-    let map_node = &seq[0];
-    let map = map_node.value.as_mapping().unwrap();
-    assert_eq!(map.len(), 2);
-    // The individual value spans should be correct.
-    let name = &map[&MapKey::String("name".into())];
-    assert_span_text(input, name.span, "Alice");
-    let age = &map[&MapKey::String("age".into())];
-    assert_span_text(input, age.span, "30");
-}
-
-// ── Span Invariants ─────────────────────────────────────────────
-
-#[test]
-fn span_start_before_end() {
-    let input = "key: value";
-    let node = parse(input).unwrap();
-    assert!(node.span.start <= node.span.end);
-}
-
-#[test]
-fn span_within_input() {
-    let input = "items:\n  - one\n  - two\n  - three";
-    let node = parse(input).unwrap();
-    assert!(node.span.end <= input.len());
-
-    let map = node.value.as_mapping().unwrap();
-    let items = &map[&MapKey::String("items".into())];
-    assert!(items.span.end <= input.len());
-
-    let seq = items.value.as_sequence().unwrap();
-    for item in seq {
-        assert!(item.span.start <= item.span.end);
-        assert!(item.span.end <= input.len());
-    }
+fn built_nodes_have_empty_spans() {
+    assert_eq!(Node::default().span, Span::new(0, 0));
 }

@@ -1,13 +1,13 @@
 //! Strongly typed Ash policy (v1) with comment preservation.
 //!
-//! Schema: https://hub.ashell.dev/schemas/policy/v1.json
+//! Schema: <https://hub.ashell.dev/schemas/policy/v1.json>
 //!
 //! Every field is wrapped in `Commented<T>` so that AYML comments can be
 //! attached to any value in the tree and survive round-trips.
 //!
 //! Run: cargo run -p ayml --example policy
 
-use ayml::commented::Commented;
+use ayml::Commented;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -267,26 +267,19 @@ struct IoDeviceRule {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-/// Shorthand: wrap a value with a top comment.
+/// Shorthand: wrap a value with a comment on the lines above it.
 fn top<T>(comment: &str, value: T) -> Commented<T> {
-    Commented {
-        top_comment: Some(comment.into()),
-        inline_comment: None,
-        value,
-    }
+    Commented::new(value).with_comment(comment)
 }
 
-/// Shorthand: wrap a value with an inline comment.
+/// Shorthand: wrap a value with a comment at the end of its line.
 fn inline<T>(value: T, comment: &str) -> Commented<T> {
-    Commented {
-        top_comment: None,
-        inline_comment: Some(comment.into()),
-        value,
-    }
+    Commented::new(value).with_inline_comment(comment)
 }
 
 // ── Main ────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_lines)]
 fn main() {
     let policy = Policy {
         schema_version: Commented::new(1),
@@ -418,7 +411,7 @@ fn main() {
     assert_eq!(policy, roundtripped, "roundtrip mismatch");
     println!("── Roundtrip OK ──");
 
-    // ── Minimal seq comment test ──────────────────────────────────────
+    // ── Comments above sequence entries ───────────────────────────────
     let seq_test = "\
 rules:
   # first rule
@@ -427,33 +420,25 @@ rules:
   - host: b
 ";
     let parsed_net: NetworkPolicy = ayml::from_str(seq_test).expect("parse seq_test");
-    println!("Rule 0 top: {:?}", parsed_net.rules[0].top_comment);
-    println!("Rule 1 top: {:?}", parsed_net.rules[1].top_comment);
-    assert_eq!(
-        parsed_net.rules[0].top_comment.as_deref(),
-        Some("first rule")
-    );
-    assert_eq!(
-        parsed_net.rules[1].top_comment.as_deref(),
-        Some("second rule")
-    );
+    assert_eq!(parsed_net.rules[0].comment.as_deref(), Some("first rule"));
+    assert_eq!(parsed_net.rules[1].comment.as_deref(), Some("second rule"));
 
     // ── Roundtrip a hand-written policy with comments ─────────────────
     //
-    // The input uses the same formatting the serializer produces so
-    // that the roundtrip is byte-identical.
+    // The input uses the canonical formatting the serializer produces, so
+    // the roundtrip is byte-identical.
     let hand_written = "\
 schema_version: 1
+# Network access rules
 network:
-  # Network access rules
   rules:
-        # Allow GitHub
+    # Allow GitHub
     - host: *.github.com # primary domain
       direction: outbound
       ports:
         - 443
         - 22
-        # Deny all other traffic
+    # Deny all other traffic
     - host: 0.0.0.0/0
       action: deny
       ports: all
@@ -462,10 +447,10 @@ network:
     let parsed: Policy = ayml::from_str(hand_written).expect("parse hand-written");
 
     let net = parsed.network.as_ref().unwrap();
-    assert_eq!(net.top_comment.as_deref(), Some("Network access rules"));
+    assert_eq!(net.comment.as_deref(), Some("Network access rules"));
 
     let rule0 = &net.value.rules[0];
-    assert_eq!(rule0.top_comment.as_deref(), Some("Allow GitHub"));
+    assert_eq!(rule0.comment.as_deref(), Some("Allow GitHub"));
     assert_eq!(rule0.value.host.value, "*.github.com");
     assert_eq!(
         rule0.value.host.inline_comment.as_deref(),
@@ -473,7 +458,7 @@ network:
     );
 
     let rule1 = &net.value.rules[1];
-    assert_eq!(rule1.top_comment.as_deref(), Some("Deny all other traffic"));
+    assert_eq!(rule1.comment.as_deref(), Some("Deny all other traffic"));
 
     // Re-serialize and verify byte-identical roundtrip
     let reserialized = ayml::to_string(&parsed).expect("reserialize");

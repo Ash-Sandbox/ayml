@@ -1,8 +1,6 @@
-use ayml_core::value::{Node, Value};
+use ayml_core::{Key, Node, Value};
 
-#[path = "../src/convert.rs"]
-#[allow(dead_code)]
-mod convert;
+use ayml_lsp::convert;
 
 #[test]
 fn i64_max() {
@@ -23,7 +21,7 @@ fn f64_max() {
     let node = Node::new(Value::Float(f64::MAX));
     let json = convert::node_to_json(&node);
     assert!(json.is_f64());
-    assert_eq!(json.as_f64().unwrap(), f64::MAX);
+    assert_eq!(json.as_f64().unwrap().to_bits(), f64::MAX.to_bits());
 }
 
 #[test]
@@ -54,4 +52,23 @@ fn large_i64_survives_json_roundtrip() {
     let serialized = serde_json::to_string(&json).unwrap();
     let deserialized: serde_json::Value = serde_json::from_str(&serialized).unwrap();
     assert_eq!(deserialized.as_i64(), Some(i64::MAX));
+}
+
+#[test]
+fn keys_are_strings() {
+    let node = ayml_core::parse("1: a\ntrue: b\n\"x y\": c\n").unwrap();
+    let json = convert::node_to_json(&node);
+    assert_eq!(json, serde_json::json!({"1": "a", "true": "b", "x y": "c"}));
+}
+
+#[test]
+fn nested_values_convert() {
+    let map: Value = [(
+        Key::new("a"),
+        Node::new(Value::Seq(vec![Node::new(Value::Null)])),
+    )]
+    .into_iter()
+    .collect();
+    let json = convert::node_to_json(&Node::new(map));
+    assert_eq!(json, serde_json::json!({"a": [null]}));
 }

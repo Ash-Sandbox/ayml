@@ -1,7 +1,7 @@
 use std::fmt;
 
 /// A byte-offset span in the source input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Span {
     /// Start byte offset (inclusive).
     pub start: usize,
@@ -24,104 +24,131 @@ impl Span {
     }
 }
 
+/// A 1-based line and column in the source. Columns count Unicode scalar values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Location {
+    pub line: usize,
+    pub column: usize,
+}
+
+impl Location {
+    /// Compute the location of a byte offset in `source`. CR, LF, and CRLF
+    /// each count as one line break. Offsets past the end are clamped.
+    #[must_use]
+    pub fn of(source: &str, offset: usize) -> Self {
+        let mut offset = offset.min(source.len());
+        while !source.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        let before = &source[..offset];
+        let bytes = before.as_bytes();
+        let mut line = 1;
+        let mut line_start = 0;
+        for (i, &b) in bytes.iter().enumerate() {
+            let is_break = b == b'\n' || (b == b'\r' && bytes.get(i + 1) != Some(&b'\n'));
+            if is_break {
+                line += 1;
+                line_start = i + 1;
+            }
+        }
+        let column = before[line_start..].chars().count() + 1;
+        Self { line, column }
+    }
+}
+
+impl fmt::Display for Location {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.line, self.column)
+    }
+}
+
 /// The kind of error that occurred.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ErrorKind {
-    /// Unexpected character encountered.
-    UnexpectedChar(char),
-    /// Unexpected end of input.
-    UnexpectedEof,
+    /// The input does not match the grammar.
+    Syntax(String),
+    /// The input ended in the middle of a construct.
+    UnexpectedEof(String),
+    /// The document contains no root node.
+    EmptyDocument,
     /// Invalid escape sequence.
     InvalidEscape(String),
     /// Tab used for indentation.
     TabIndent,
     /// Duplicate mapping key.
     DuplicateKey(String),
-    /// Null used as a mapping key.
-    NullKey,
-    /// Float used as a mapping key.
-    FloatKey,
-    /// Expected a specific token or production.
-    Expected(String),
-    /// A byte order mark was found.
+    /// A byte order mark was found at the start of the input.
     ByteOrderMark,
-    /// Non-printable character found.
+    /// A character outside the printable set appeared literally.
     NonPrintable(char),
-    /// An integer literal that overflows i64.
+    /// An integer literal outside the 64-bit signed range.
     IntegerOverflow,
+    /// A finite float literal too large to represent.
+    FloatOverflow,
     /// Nesting depth exceeded the configured limit.
     RecursionLimit,
 }
 
-/// A parse or emit error with location information.
-#[derive(Debug, Clone)]
+impl fmt::Display for ErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Syntax(msg) => f.write_str(msg),
+            Self::UnexpectedEof(what) => write!(f, "unexpected end of input {what}"),
+            Self::EmptyDocument => f.write_str("document is empty (expected a root value)"),
+            Self::InvalidEscape(s) => write!(f, "invalid escape sequence: {s}"),
+            Self::TabIndent => f.write_str("tabs must not be used for indentation"),
+            Self::DuplicateKey(k) => write!(f, "duplicate mapping key `{k}`"),
+            Self::ByteOrderMark => f.write_str("byte order mark is not allowed"),
+            Self::NonPrintable(c) => write!(
+                f,
+                "non-printable character U+{:04X} (use an escape sequence in a quoted string)",
+                *c as u32
+            ),
+            Self::IntegerOverflow => {
+                f.write_str("integer literal is out of range (AYML integers are 64-bit signed)")
+            }
+            Self::FloatOverflow => f.write_str("float literal is out of range"),
+            Self::RecursionLimit => f.write_str("nesting depth exceeds the recursion limit"),
+        }
+    }
+}
+
+/// A parse error with location information.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
     pub kind: ErrorKind,
     pub span: Span,
-    /// Human-readable line number (1-based).
-    pub line: usize,
-    /// Human-readable column number (1-based).
-    pub column: usize,
+    /// Line and column of `span.start`.
+    pub location: Location,
 }
 
 impl Error {
-    /// Create an error and compute line/column from the source input.
+    /// Create an error, computing its line and column from the source input.
     #[must_use]
     pub fn new(kind: ErrorKind, span: Span, source: &str) -> Self {
-        let (line, column) = offset_to_line_col(source, span.start);
         Self {
             kind,
             span,
-            line,
-            column,
+            location: Location::of(source, span.start),
         }
     }
-}
 
-fn offset_to_line_col(source: &str, offset: usize) -> (usize, usize) {
-    let offset = offset.min(source.len());
-    let mut line = 1;
-    let mut col = 1;
-    let bytes = source.as_bytes();
-    let mut i = 0;
-    while i < offset {
-        if bytes[i] == b'\r' {
-            line += 1;
-            col = 1;
-            // If \r\n, skip the \n as part of the same line break
-            if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
-                i += 1;
-            }
-        } else if bytes[i] == b'\n' {
-            line += 1;
-            col = 1;
-        } else {
-            col += 1;
-        }
-        i += 1;
+    /// 1-based line number.
+    #[must_use]
+    pub const fn line(&self) -> usize {
+        self.location.line
     }
-    (line, col)
+
+    /// 1-based column number, counted in Unicode scalar values.
+    #[must_use]
+    pub const fn column(&self) -> usize {
+        self.location.column
+    }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}: ", self.line, self.column)?;
-        match &self.kind {
-            ErrorKind::UnexpectedChar(c) => write!(f, "unexpected character '{c}'"),
-            ErrorKind::UnexpectedEof => write!(f, "unexpected end of input"),
-            ErrorKind::InvalidEscape(s) => write!(f, "invalid escape sequence: '{s}'"),
-            ErrorKind::TabIndent => write!(f, "tabs must not be used for indentation"),
-            ErrorKind::DuplicateKey(k) => write!(f, "duplicate mapping key: '{k}'"),
-            ErrorKind::NullKey => write!(f, "null cannot be used as a mapping key"),
-            ErrorKind::FloatKey => write!(f, "float cannot be used as a mapping key"),
-            ErrorKind::Expected(what) => write!(f, "expected {what}"),
-            ErrorKind::ByteOrderMark => write!(f, "byte order mark is not allowed"),
-            ErrorKind::NonPrintable(c) => {
-                write!(f, "non-printable character U+{:04X}", *c as u32)
-            }
-            ErrorKind::IntegerOverflow => write!(f, "integer literal overflows i64"),
-            ErrorKind::RecursionLimit => write!(f, "nesting depth exceeds recursion limit"),
-        }
+        write!(f, "{}: {}", self.location, self.kind)
     }
 }
 

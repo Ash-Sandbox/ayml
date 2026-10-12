@@ -3,6 +3,7 @@ members = [
     "ayml",
     "ayml-core",
     "ayml-lsp",
+    "ayml-testgen",
 ]
 resolver = "3"
 exclude = ["editors/zed"]
@@ -19,3 +20,8 @@ cast_sign_loss = "allow"
 cast_precision_loss = "allow"
 needless_pass_by_value = "allow"
 return_self_not_must_use = "allow"
+
+# Property tests generate and parse many thousands of documents;
+# a little optimization keeps `cargo t` fast.
+[profile.test]
+opt-level = 1

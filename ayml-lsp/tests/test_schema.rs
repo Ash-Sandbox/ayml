@@ -1,17 +1,12 @@
-#[path = "../src/schema.rs"]
-#[allow(dead_code)]
-mod schema;
+use ayml_lsp::schema;
 
 use serde_json::Value as Json;
 
+/// A snapshot of <https://hub.ashell.dev/schemas/policy/v1.json>, vendored so
+/// the tests run offline.
 fn load_policy_schema() -> Json {
-    let body = ureq::get("https://hub.ashell.dev/schemas/policy/v1.json")
-        .call()
-        .expect("failed to fetch policy schema")
-        .body_mut()
-        .read_to_string()
-        .expect("failed to read schema body");
-    serde_json::from_str(&body).expect("failed to parse schema JSON")
+    serde_json::from_str(include_str!("fixtures/policy-v1.schema.json"))
+        .expect("failed to parse schema JSON")
 }
 
 #[test]
@@ -84,4 +79,15 @@ fn operations_element_shows_enum_values() {
         content.contains("read") && content.contains("write") && content.contains("delete"),
         "expected enum values in operations element hover, got:\n{content}"
     );
+}
+
+#[test]
+fn cyclic_schemas_terminate() {
+    let root: Json = serde_json::from_str(
+        r##"{"anyOf": [{"$ref": "#"}], "allOf": [{"$ref": "#"}], "oneOf": [{"$ref": "#/oneOf/0"}]}"##,
+    )
+    .unwrap();
+    assert!(schema::resolve_sub_schema(&root, &["a", "b"]).is_none());
+    assert!(schema::type_string(&root, &root).is_none());
+    let _ = schema::hover_content(&root, &root);
 }

@@ -1,13 +1,9 @@
-use ayml_core::value::{Node, Value};
+use ayml_core::{Node, Value};
 use serde_json::json;
 
 /// Convert an AYML [`Node`] into a [`serde_json::Value`], discarding comments.
 pub fn node_to_json(node: &Node) -> serde_json::Value {
-    value_to_json(&node.value)
-}
-
-fn value_to_json(value: &Value) -> serde_json::Value {
-    match value {
+    match &node.value {
         Value::Null => serde_json::Value::Null,
         Value::Bool(b) => json!(b),
         Value::Int(i) => json!(i),
@@ -26,12 +22,10 @@ fn value_to_json(value: &Value) -> serde_json::Value {
         }
         Value::Str(s) => json!(s),
         Value::Seq(items) => serde_json::Value::Array(items.iter().map(node_to_json).collect()),
-        Value::Map(map) => {
-            let obj = map
-                .iter()
-                .map(|(k, v)| (k.to_string(), node_to_json(v)))
-                .collect();
-            serde_json::Value::Object(obj)
-        }
+        Value::Map(map) => serde_json::Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.name.clone(), node_to_json(v)))
+                .collect(),
+        ),
     }
 }

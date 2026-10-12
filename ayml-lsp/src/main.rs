@@ -1,13 +1,7 @@
 #![allow(clippy::mutable_key_type)] // Uri from lsp-types has interior mutability but is used as a map key by convention.
 
-mod convert;
-mod locate;
-mod schema;
-
-use ayml_core::{
-    error::Span,
-    value::{MapKey, Node, Value},
-};
+use ayml_core::{Node, Span, Value, directive::document_schema_uri};
+use ayml_lsp::{convert, locate, schema};
 use jsonschema::error::ValidationErrorKind;
 use lsp_server::{Connection, Message, Notification, Response};
 use lsp_types::{
@@ -18,6 +12,7 @@ use lsp_types::{
     notification::Notification as _, request::Request as _,
 };
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 fn main() {
     if let Err(e) = run() {
@@ -46,7 +41,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 fn main_loop(connection: &Connection) -> Result<(), Box<dyn std::error::Error>> {
     let mut documents: HashMap<Uri, String> = HashMap::new();
-    let mut schema_cache: HashMap<String, serde_json::Value> = HashMap::new();
+    let mut schemas = SchemaCache::new();
 
     for msg in &connection.receiver {
         match msg {
@@ -57,7 +52,7 @@ fn main_loop(connection: &Connection) -> Result<(), Box<dyn std::error::Error>> 
                 if req.method == lsp_types::request::HoverRequest::METHOD {
                     let (id, params): (_, HoverParams) =
                         req.extract(lsp_types::request::HoverRequest::METHOD)?;
-                    let hover = handle_hover(&params, &documents, &mut schema_cache);
+                    let hover = handle_hover(&params, &documents, &mut schemas);
                     let resp = Response::new_ok(id, hover);
                     connection.sender.send(Message::Response(resp))?;
                 } else {
@@ -72,17 +67,17 @@ fn main_loop(connection: &Connection) -> Result<(), Box<dyn std::error::Error>> 
             Message::Notification(not) => match not.method.as_str() {
                 lsp_types::notification::DidOpenTextDocument::METHOD => {
                     let params: DidOpenTextDocumentParams = serde_json::from_value(not.params)?;
-                    let uri = params.text_document.uri.clone();
-                    let text = params.text_document.text.clone();
-                    documents.insert(uri.clone(), text.clone());
-                    publish_diagnostics(connection, uri, &text, &mut schema_cache)?;
+                    let doc = params.text_document;
+                    publish_diagnostics(connection, doc.uri.clone(), &doc.text, &mut schemas)?;
+                    documents.insert(doc.uri, doc.text);
                 }
                 lsp_types::notification::DidChangeTextDocument::METHOD => {
                     let params: DidChangeTextDocumentParams = serde_json::from_value(not.params)?;
-                    let uri = params.text_document.uri.clone();
-                    if let Some(change) = params.content_changes.into_iter().next() {
-                        documents.insert(uri.clone(), change.text.clone());
-                        publish_diagnostics(connection, uri, &change.text, &mut schema_cache)?;
+                    // With full sync, the last change holds the whole document.
+                    if let Some(change) = params.content_changes.into_iter().last() {
+                        let uri = params.text_document.uri;
+                        publish_diagnostics(connection, uri.clone(), &change.text, &mut schemas)?;
+                        documents.insert(uri, change.text);
                     }
                 }
                 lsp_types::notification::DidCloseTextDocument::METHOD => {
@@ -106,38 +101,87 @@ fn main_loop(connection: &Connection) -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
+/// A JSON Schema and its compiled validator.
+struct Schema {
+    json: serde_json::Value,
+    validator: jsonschema::Validator,
+}
+
+/// Schemas by URL. Loading happens on the server's only thread, so fetches
+/// time out, and a failure is remembered for a while rather than retried on
+/// every keystroke.
+struct SchemaCache {
+    agent: ureq::Agent,
+    entries: HashMap<String, (Instant, Result<Schema, String>)>,
+}
+
+impl SchemaCache {
+    const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+    const RETRY_FAILURE_AFTER: Duration = Duration::from_secs(60);
+
+    fn new() -> Self {
+        let agent = ureq::Agent::config_builder()
+            .timeout_global(Some(Self::FETCH_TIMEOUT))
+            .build()
+            .into();
+        Self {
+            agent,
+            entries: HashMap::new(),
+        }
+    }
+
+    fn get(&mut self, url: &str) -> Result<&Schema, &str> {
+        let stale = self.entries.get(url).is_none_or(|(loaded, schema)| {
+            schema.is_err() && loaded.elapsed() > Self::RETRY_FAILURE_AFTER
+        });
+        if stale {
+            let schema = self.load(url);
+            self.entries
+                .insert(url.to_owned(), (Instant::now(), schema));
+        }
+        self.entries[url].1.as_ref().map_err(String::as_str)
+    }
+
+    fn load(&self, url: &str) -> Result<Schema, String> {
+        let json = self
+            .fetch(url)
+            .map_err(|e| format!("failed to fetch schema: {e}"))?;
+        let validator =
+            jsonschema::validator_for(&json).map_err(|e| format!("invalid schema: {e}"))?;
+        Ok(Schema { json, validator })
+    }
+
+    fn fetch(&self, url: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let text = if let Some(path) = url.strip_prefix("file://") {
+            std::fs::read_to_string(path)?
+        } else if url.starts_with("https://") || url.starts_with("http://") {
+            self.agent.get(url).call()?.body_mut().read_to_string()?
+        } else {
+            return Err("only http, https, and file URLs are supported".into());
+        };
+        Ok(serde_json::from_str(&text)?)
+    }
+}
+
 fn publish_diagnostics(
     connection: &Connection,
     uri: Uri,
     text: &str,
-    schema_cache: &mut HashMap<String, serde_json::Value>,
+    schemas: &mut SchemaCache,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut diagnostics = Vec::new();
-
-    match ayml_core::parse(text) {
-        Err(e) => {
-            let line = e.line.saturating_sub(1) as u32;
-            let col = e.column.saturating_sub(1) as u32;
-            diagnostics.push(Diagnostic {
-                range: Range::new(Position::new(line, col), Position::new(line, col)),
-                severity: Some(DiagnosticSeverity::ERROR),
-                source: Some("ayml".to_string()),
-                message: format!("{e}"),
-                ..Default::default()
-            });
-        }
-        Ok(node) => {
-            // Check for schema directive in the document comment.
-            if let Some(comment) = &node.comment
-                && let Some(schema_url) = ayml_core::directive::schema_uri(comment)
-            {
-                let schema_diagnostics =
-                    validate_with_schema(&node, text, schema_url, schema_cache);
-                diagnostics.extend(schema_diagnostics);
-            }
-        }
-    }
-
+    let diagnostics = match ayml_core::parse(text) {
+        Err(e) => vec![Diagnostic {
+            range: span_to_range(text, e.span),
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some("ayml".to_string()),
+            message: format!("{e}"),
+            ..Default::default()
+        }],
+        Ok(node) => match document_schema_uri(&node) {
+            Some(url) => validate_with_schema(&node, text, url, schemas),
+            None => Vec::new(),
+        },
+    };
     let params = PublishDiagnosticsParams {
         uri,
         diagnostics,
@@ -151,45 +195,24 @@ fn validate_with_schema(
     node: &Node,
     text: &str,
     schema_url: &str,
-    cache: &mut HashMap<String, serde_json::Value>,
+    schemas: &mut SchemaCache,
 ) -> Vec<Diagnostic> {
-    let schema_value = match cache.get(schema_url) {
-        Some(v) => v.clone(),
-        None => match fetch_schema(schema_url) {
-            Ok(v) => {
-                cache.insert(schema_url.to_string(), v.clone());
-                v
-            }
-            Err(e) => {
-                return vec![Diagnostic {
-                    range: Range::new(Position::new(0, 0), Position::new(0, 0)),
-                    severity: Some(DiagnosticSeverity::WARNING),
-                    source: Some("ayml".to_string()),
-                    message: format!("failed to fetch schema: {e}"),
-                    ..Default::default()
-                }];
-            }
-        },
-    };
-
-    let validator = match jsonschema::validator_for(&schema_value) {
-        Ok(v) => v,
-        Err(e) => {
+    let schema = match schemas.get(schema_url) {
+        Ok(schema) => schema,
+        Err(message) => {
             return vec![Diagnostic {
                 range: Range::new(Position::new(0, 0), Position::new(0, 0)),
                 severity: Some(DiagnosticSeverity::WARNING),
                 source: Some("ayml".to_string()),
-                message: format!("invalid schema: {e}"),
+                message: message.to_owned(),
                 ..Default::default()
             }];
         }
     };
-
     let json_value = convert::node_to_json(node);
-
     let mut diagnostics = Vec::new();
-    for error in validator.iter_errors(&json_value) {
-        collect_leaf_errors(&error, node, text, &schema_value, &mut diagnostics);
+    for error in schema.validator.iter_errors(&json_value) {
+        collect_leaf_errors(&error, node, text, &schema.json, &mut diagnostics);
     }
     diagnostics
 }
@@ -312,24 +335,25 @@ fn resolve_instance_path(node: &Node, path: &str) -> Option<Span> {
         return Some(node.span);
     }
 
-    let segments: Vec<&str> = path.strip_prefix('/')?.split('/').collect();
     let mut current = node;
-
-    for segment in &segments {
-        match &current.value {
-            Value::Map(map) => {
-                let key = MapKey::String(segment.to_string());
-                current = map.get(&key)?;
-            }
-            Value::Seq(items) => {
-                let index: usize = segment.parse().ok()?;
-                current = items.get(index)?;
-            }
-            _ => return None,
-        }
+    for segment in path.strip_prefix('/')?.split('/') {
+        current = child(current, &unescape_pointer_segment(segment))?;
     }
-
     Some(current.span)
+}
+
+/// Decode a JSON pointer segment (RFC 6901): `~1` is `/` and `~0` is `~`.
+fn unescape_pointer_segment(segment: &str) -> String {
+    segment.replace("~1", "/").replace("~0", "~")
+}
+
+/// The child of a mapping (by key) or sequence (by index).
+fn child<'a>(node: &'a Node, segment: &str) -> Option<&'a Node> {
+    match &node.value {
+        Value::Map(map) => map.get(segment),
+        Value::Seq(items) => items.get(segment.parse::<usize>().ok()?),
+        _ => None,
+    }
 }
 
 /// Convert a byte-offset Span to an LSP Range using the source text.
@@ -339,25 +363,30 @@ fn span_to_range(text: &str, span: Span) -> Range {
     Range::new(start, end)
 }
 
-/// Convert a byte offset to a 0-based LSP Position.
+/// Convert a byte offset to a 0-based LSP Position. LSP columns count
+/// UTF-16 code units; CR, LF, and CRLF each end a line.
 fn offset_to_position(text: &str, offset: usize) -> Position {
-    let offset = offset.min(text.len());
+    let mut offset = offset.min(text.len());
+    while !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
     let mut line = 0u32;
     let mut col = 0u32;
-    let bytes = text.as_bytes();
-    let mut i = 0;
-    while i < offset {
-        if bytes[i] == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
-            line += 1;
-            col = 0;
-            i += 2; // skip both \r and \n
-        } else if bytes[i] == b'\n' || bytes[i] == b'\r' {
-            line += 1;
-            col = 0;
-            i += 1;
-        } else {
-            col += 1;
-            i += 1;
+    let mut chars = text[..offset].chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                line += 1;
+                col = 0;
+            }
+            '\n' => {
+                line += 1;
+                col = 0;
+            }
+            c => col += c.len_utf16() as u32,
         }
     }
     Position::new(line, col)
@@ -366,32 +395,21 @@ fn offset_to_position(text: &str, offset: usize) -> Position {
 fn handle_hover(
     params: &HoverParams,
     documents: &HashMap<Uri, String>,
-    schema_cache: &mut HashMap<String, serde_json::Value>,
+    schemas: &mut SchemaCache,
 ) -> Option<Hover> {
     let uri = &params.text_document_position_params.text_document.uri;
     let text = documents.get(uri)?;
     let node = ayml_core::parse(text).ok()?;
-
-    // Find the schema URL from the document comment.
-    let schema_url = node
-        .comment
-        .as_deref()
-        .and_then(ayml_core::directive::schema_uri)?;
-
-    let schema_value = if let Some(url) = schema_cache.get(schema_url) {
-        url.clone()
-    } else {
-        let v = fetch_schema(schema_url).ok()?;
-        schema_cache.insert(schema_url.to_string(), v.clone());
-        v
-    };
+    let schema = &schemas.get(document_schema_uri(&node)?).ok()?.json;
 
     // Map cursor position to byte offset, then to a path in the node tree.
     let pos = params.text_document_position_params.position;
     let offset = position_to_offset(text, pos);
 
     // Don't show hover on comment lines.
-    if is_in_comment(text, offset) {
+    let mut tokens = Vec::new();
+    locate::token_spans(&node, &mut tokens);
+    if is_in_comment(text, offset, &tokens) {
         return None;
     }
 
@@ -399,8 +417,8 @@ fn handle_hover(
     let path_refs: Vec<&str> = path_segments.iter().map(String::as_str).collect();
 
     // Walk the schema to the sub-schema at that path.
-    let sub_schema = schema::resolve_sub_schema(&schema_value, &path_refs)?;
-    let content = schema::hover_content(&schema_value, sub_schema)?;
+    let sub_schema = schema::resolve_sub_schema(schema, &path_refs)?;
+    let content = schema::hover_content(schema, sub_schema)?;
 
     let hover_range = compute_hover_range(&node, &path_segments, text);
 
@@ -413,179 +431,105 @@ fn handle_hover(
     })
 }
 
-/// Convert a 0-based LSP Position to a byte offset in the source text.
+/// Convert a 0-based LSP Position (UTF-16 columns) to a byte offset in the
+/// source text. Positions past the end of a line clamp to the line end; a
+/// position inside a surrogate pair resolves to the start of its character.
 fn position_to_offset(text: &str, pos: Position) -> usize {
     let mut line = 0u32;
     let mut col = 0u32;
-    let bytes = text.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if line == pos.line && col == pos.character {
+    let mut chars = text.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if line == pos.line && (col >= pos.character || c == '\n' || c == '\r') {
             return i;
         }
-        if bytes[i] == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
-            if line == pos.line {
-                return i;
+        match c {
+            '\r' => {
+                if matches!(chars.peek(), Some((_, '\n'))) {
+                    chars.next();
+                }
+                line += 1;
+                col = 0;
             }
-            line += 1;
-            col = 0;
-            i += 2;
-        } else if bytes[i] == b'\n' || bytes[i] == b'\r' {
-            if line == pos.line {
-                return i;
+            '\n' => {
+                line += 1;
+                col = 0;
             }
-            line += 1;
-            col = 0;
-            i += 1;
-        } else {
-            col += 1;
-            i += 1;
+            c => {
+                let width = c.len_utf16() as u32;
+                if line == pos.line && col + width > pos.character {
+                    return i;
+                }
+                col += width;
+            }
         }
-    }
-    if line == pos.line && col == pos.character {
-        return text.len();
     }
     text.len()
 }
 
-/// Compute the hover highlight range for a mapping entry.
+/// Compute the hover highlight range for the node at `path`.
 ///
 /// - Scalar values: highlight the whole `key: value` pair.
 /// - Block values (maps, non-empty seqs): highlight just `key:`.
 /// - Non-mapping paths (e.g. sequence indices): highlight the value span.
 fn compute_hover_range(root: &Node, path: &[String], text: &str) -> Option<Range> {
-    if path.is_empty() {
+    let Some((last, parents)) = path.split_last() else {
         return Some(span_to_range(text, root.span));
-    }
-
-    // Walk to the parent node and get the last segment (the key).
-    let mut current = root;
-    for segment in &path[..path.len() - 1] {
-        match &current.value {
-            Value::Map(map) => {
-                let key = MapKey::String(segment.clone());
-                current = map.get(&key)?;
-            }
-            Value::Seq(items) => {
-                let idx: usize = segment.parse().ok()?;
-                current = items.get(idx)?;
-            }
-            _ => return None,
-        }
-    }
-
-    let last_segment = path.last()?;
-
-    // If parent is a sequence, highlight just the value span.
-    let Value::Map(map) = &current.value else {
-        if let Value::Seq(items) = &current.value {
-            let idx: usize = last_segment.parse().ok()?;
-            let item = items.get(idx)?;
-            return Some(span_to_range(text, item.span));
-        }
-        return None;
     };
-
-    let key = MapKey::String(last_segment.clone());
-    let value_node = map.get(&key)?;
-
-    let is_block = matches!(
-        &value_node.value,
-       Value::Map(m) if !m.is_empty()
-    ) || matches!(
-        &value_node.value,
-       Value::Seq(s) if !s.is_empty()
-    );
-
-    // Find where `key:` appears before the value span.
-    // Search backwards from the value for the colon, then backwards from
-    // the colon for the key text start.
-    let before_value = &text[..value_node.span.start];
-    let colon = before_value.rfind(':')?;
-    // The key text is just before the colon (possibly with spaces between
-    // key and colon, though AYML doesn't allow that in block context).
-    // Search backwards from colon past any whitespace to find the key end,
-    // then find the key start.
-    let key_end = text[..colon]
-        .bytes()
-        .rposition(|b| b != b' ' && b != b'\t')
-        .map_or(colon, |i| i + 1);
-    // Key start: scan backwards from key_end past non-delimiter chars.
-    // Stop at whitespace, `{`, `,`, `-`, or start of string.
-    let key_start = text[..key_end]
-        .bytes()
-        .rposition(|b| {
-            b == b' '
-                || b == b'\t'
-                || b == b'\n'
-                || b == b'\r'
-                || b == b'{'
-                || b == b','
-                || b == b'-'
-        })
-        .map_or(0, |i| i + 1);
-
-    if is_block {
-        // Highlight `key:` (including the colon).
-        let start = offset_to_position(text, key_start);
-        let end = offset_to_position(text, colon + 1);
-        Some(Range::new(start, end))
-    } else {
-        // Scalar or empty collection: highlight the whole `key: value` pair.
-        let start = offset_to_position(text, key_start);
-        let end = offset_to_position(text, value_node.span.end);
-        Some(Range::new(start, end))
+    let mut parent = root;
+    for segment in parents {
+        parent = child(parent, segment)?;
     }
+
+    let map = match &parent.value {
+        Value::Map(map) => map,
+        Value::Seq(_) => return Some(span_to_range(text, child(parent, last)?.span)),
+        _ => return None,
+    };
+    let (key, value) = map.get_key_value(last.as_str())?;
+
+    let is_block = match &value.value {
+        Value::Map(m) => !m.is_empty(),
+        Value::Seq(s) => !s.is_empty(),
+        _ => false,
+    };
+    let end = if is_block {
+        // Only white space separates a block key from its `:`.
+        key.span.end + text[key.span.end..].find(':')? + 1
+    } else {
+        value.span.end
+    };
+    Some(span_to_range(text, Span::new(key.span.start, end)))
 }
 
-/// Check if the byte offset falls within a comment — either a full comment
-/// line (first non-space is `#`) or an inline comment (after ` #` on a line).
-fn is_in_comment(text: &str, offset: usize) -> bool {
-    let line_start = text[..offset].rfind('\n').map_or(0, |i| i + 1);
-    let line = &text[line_start..];
-
-    // Full comment line: first non-whitespace is `#`.
-    if line.bytes().find(|&b| b != b' ' && b != b'\t') == Some(b'#') {
+/// True if the byte offset falls within a comment. `tokens` are the spans of
+/// every key and scalar (see [`locate::token_spans`]); a `#` inside a token,
+/// such as in a quoted or triple-quoted string, does not start a comment.
+fn is_in_comment(text: &str, offset: usize, tokens: &[Span]) -> bool {
+    // Tokens are in document order and do not overlap.
+    let in_token = |i: usize| {
+        let after = tokens.partition_point(|s| s.start <= i);
+        after > 0 && i < tokens[after - 1].end
+    };
+    if in_token(offset) {
+        return false;
+    }
+    let bytes = text.as_bytes();
+    let line_start = text[..offset].rfind(['\n', '\r']).map_or(0, |i| i + 1);
+    let line_end = text[line_start..]
+        .find(['\n', '\r'])
+        .map_or(text.len(), |i| line_start + i);
+    let starts_comment = |i: usize| {
+        bytes[i] == b'#'
+            && !in_token(i)
+            && (i == line_start || matches!(bytes[i - 1], b' ' | b'\t'))
+    };
+    // A full comment line: everything on it counts, including indentation.
+    if let Some(first) = (line_start..line_end).find(|&i| !matches!(bytes[i], b' ' | b'\t'))
+        && starts_comment(first)
+    {
         return true;
     }
-
-    // Inline comment: check if offset is at or past a ` #` on this line.
-    // We need to skip `#` inside quoted strings.
-    let offset_in_line = offset - line_start;
-    let mut in_quote = false;
-    let mut i = 0;
-    let bytes = line.as_bytes();
-    while i < bytes.len() {
-        if in_quote {
-            if bytes[i] == b'\\' {
-                i += 1; // skip escaped character
-            } else if bytes[i] == b'"' {
-                in_quote = false;
-            }
-        } else if bytes[i] == b'"' {
-            in_quote = true;
-        } else if bytes[i] == b'#' {
-            if offset_in_line >= i {
-                return true;
-            }
-            break;
-        } else if bytes[i] == b'\n' || bytes[i] == b'\r' {
-            break;
-        }
-        i += 1;
-    }
-
-    false
-}
-
-fn fetch_schema(url: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    if let Some(path) = url.strip_prefix("file://") {
-        let content = std::fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&content)?)
-    } else {
-        let body = ureq::get(url).call()?.body_mut().read_to_string()?;
-        Ok(serde_json::from_str(&body)?)
-    }
+    (line_start..(offset + 1).min(line_end)).any(starts_comment)
 }
 
 fn send_notification<N: lsp_types::notification::Notification>(
@@ -604,8 +548,16 @@ mod tests {
     /// Helper: parse input and compute hover range for the given path.
     fn hover_range_for(input: &str, path: &[&str]) -> Option<Range> {
         let node = ayml_core::parse(input).unwrap();
-        let path: Vec<String> = path.iter().map(|s| s.to_string()).collect();
+        let path: Vec<String> = path.iter().map(ToString::to_string).collect();
         compute_hover_range(&node, &path, input)
+    }
+
+    /// Whether `offset` is in a comment of the (valid) document `input`.
+    fn comment_at(input: &str, offset: usize) -> bool {
+        let node = ayml_core::parse(input).unwrap();
+        let mut tokens = Vec::new();
+        locate::token_spans(&node, &mut tokens);
+        is_in_comment(input, offset, &tokens)
     }
 
     /// Extract the highlighted text from a Range.
@@ -734,7 +686,7 @@ mod tests {
         for col in 0..21 {
             let offset = col;
             assert!(
-                is_in_comment(input, offset),
+                comment_at(input, offset),
                 "offset {offset} should be in comment"
             );
         }
@@ -745,7 +697,7 @@ mod tests {
         let input = "key: value";
         for offset in 0..input.len() {
             assert!(
-                !is_in_comment(input, offset),
+                !comment_at(input, offset),
                 "offset {offset} should not be in comment"
             );
         }
@@ -757,16 +709,16 @@ mod tests {
         // Offsets on "key: value" (0..10) are not in comment.
         for offset in 0..10 {
             assert!(
-                !is_in_comment(input, offset),
+                !comment_at(input, offset),
                 "offset {offset} should not be in comment"
             );
         }
         // The space before `#` (offset 10) is not in comment.
-        assert!(!is_in_comment(input, 10));
+        assert!(!comment_at(input, 10));
         // The `#` itself (offset 11) and after are in comment.
         for offset in 11..input.len() {
             assert!(
-                is_in_comment(input, offset),
+                comment_at(input, offset),
                 "offset {offset} should be in comment"
             );
         }
@@ -778,7 +730,7 @@ mod tests {
         // No position should be detected as comment.
         for offset in 0..input.len() {
             assert!(
-                !is_in_comment(input, offset),
+                !comment_at(input, offset),
                 "offset {offset} should not be in comment (hash is inside quotes)"
             );
         }
@@ -787,11 +739,11 @@ mod tests {
     #[test]
     fn schema_directive_line_is_comment() {
         let input = "# language-server: $schema=https://example.com\nkey: val";
-        assert!(is_in_comment(input, 0));
-        assert!(is_in_comment(input, 10));
+        assert!(comment_at(input, 0));
+        assert!(comment_at(input, 10));
         // After the newline, on "key: val" line.
         let key_offset = input.find("key").unwrap();
-        assert!(!is_in_comment(input, key_offset));
+        assert!(!comment_at(input, key_offset));
     }
 
     // ── position_to_offset / offset_to_position roundtrip ───────
@@ -816,7 +768,7 @@ mod tests {
         let input = "key: \"hello\\\"#world\"";
         let hash_offset = input.find('#').unwrap();
         assert!(
-            !is_in_comment(input, hash_offset),
+            !comment_at(input, hash_offset),
             "hash inside escaped-quote string should not be a comment"
         );
     }
@@ -861,5 +813,97 @@ mod tests {
         assert_eq!(position_to_offset(input, Position::new(0, 1)), 1); // B
         assert_eq!(position_to_offset(input, Position::new(1, 0)), 4); // C
         assert_eq!(position_to_offset(input, Position::new(1, 1)), 5); // D
+    }
+
+    // ── key spans ───────────────────────────────────────────────
+
+    #[test]
+    fn quoted_key_highlights_quotes() {
+        let input = "\"my key\": 1";
+        let range = hover_range_for(input, &["my key"]).unwrap();
+        assert_eq!(range_text(input, range), "\"my key\": 1");
+    }
+
+    #[test]
+    fn spaces_before_colon_block_key() {
+        let input = "city    :\n  name: x";
+        let range = hover_range_for(input, &["city"]).unwrap();
+        assert_eq!(range_text(input, range), "city    :");
+    }
+
+    #[test]
+    fn key_containing_colon_and_dash() {
+        let input = "outer:\n  a:b-c: 1";
+        let range = hover_range_for(input, &["outer", "a:b-c"]).unwrap();
+        assert_eq!(range_text(input, range), "a:b-c: 1");
+    }
+
+    #[test]
+    fn pointer_segments_are_unescaped() {
+        let input = "a/b:\n  c~d: 1";
+        let node = ayml_core::parse(input).unwrap();
+        let span = resolve_instance_path(&node, "/a~1b/c~0d").unwrap();
+        assert_eq!(&input[span.start..span.end], "1");
+    }
+
+    // ── comments ────────────────────────────────────────────────
+
+    #[test]
+    fn hash_in_triple_quoted_string_not_comment() {
+        let input = "code: \"\"\"\n  # not a comment\n  \"\"\"\n";
+        let hash = input.find('#').unwrap();
+        assert!(!comment_at(input, hash));
+        assert!(!comment_at(input, hash + 3));
+    }
+
+    #[test]
+    fn hash_inside_bare_string_impossible_but_flow_comment_detected() {
+        let input = "a: [1, # one\n  2]";
+        let hash = input.find('#').unwrap();
+        assert!(comment_at(input, hash + 2));
+        assert!(!comment_at(input, input.find('2').unwrap()));
+    }
+
+    // ── UTF-16 positions ────────────────────────────────────────
+
+    #[test]
+    fn positions_count_utf16_code_units() {
+        let input = "é😀x: 1";
+        let x = input.find('x').unwrap();
+        // é is 1 UTF-16 unit, 😀 is 2.
+        assert_eq!(offset_to_position(input, x), Position::new(0, 3));
+        assert_eq!(position_to_offset(input, Position::new(0, 3)), x);
+        // A position inside the surrogate pair resolves to the emoji's start.
+        assert_eq!(position_to_offset(input, Position::new(0, 2)), "é".len());
+    }
+
+    #[test]
+    fn position_past_line_end_clamps() {
+        let input = "ab\ncd";
+        assert_eq!(position_to_offset(input, Position::new(0, 10)), 2);
+        assert_eq!(position_to_offset(input, Position::new(5, 0)), input.len());
+    }
+
+    #[test]
+    fn position_offset_roundtrip_unicode() {
+        let input = "ключ: значение\n- 😀\r\n";
+        for (offset, _) in input.char_indices() {
+            if offset > 0
+                && input.as_bytes()[offset] == b'\n'
+                && input.as_bytes()[offset - 1] == b'\r'
+            {
+                continue;
+            }
+            let pos = offset_to_position(input, offset);
+            assert_eq!(position_to_offset(input, pos), offset, "offset {offset}");
+        }
+    }
+
+    #[test]
+    fn hover_range_with_non_ascii_prefix() {
+        let input = "ключ:\n  имя: Алиса";
+        let range = hover_range_for(input, &["ключ", "имя"]).unwrap();
+        assert_eq!(range.start, Position::new(1, 2));
+        assert_eq!(range_text(input, range), "имя: Алиса");
     }
 }

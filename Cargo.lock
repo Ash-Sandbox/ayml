@@ -65,10 +65,12 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 name = "ayml"
 version = "0.1.0"
 dependencies = [
+ "ayml-core",
+ "ayml-testgen",
  "criterion",
  "indexmap",
- "itoa",
  "proptest",
+ "proptest-derive",
  "ryu",
  "schemars",
  "serde",
@@ -81,8 +83,11 @@ dependencies = [
 name = "ayml-core"
 version = "0.1.0"
 dependencies = [
+ "ayml-testgen",
  "indexmap",
  "proptest",
+ "ryu",
+ "serde_json",
 ]
 
 [[package]]
@@ -95,6 +100,15 @@ dependencies = [
  "lsp-types",
  "serde_json",
  "ureq",
+]
+
+[[package]]
+name = "ayml-testgen"
+version = "0.0.0"
+dependencies = [
+ "ayml-core",
+ "indexmap",
+ "proptest",
 ]
 
 [[package]]
@@ -1023,6 +1037,17 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
+]
+
+[[package]]
+name = "proptest-derive"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c57924a81864dddafba92e1bf92f9bf82f97096c44489548a60e888e1547549b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

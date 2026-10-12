@@ -1,6 +1,6 @@
 # AYML version 1.0
 
-**2026-03-07**
+**2026-10-12**
 
 **Status of this Document**
 
@@ -12,8 +12,9 @@ It defines the AYML 1.0 data language.
 AYML is a software configuration language that looks like YAML and acts like JSON.
 It is meant to be a human-friendly, cross language, Unicode based software
 configuration language. Unlike YAML, it is not designed as a fully featured
-data serialization framework. There are no references, types, unordered sets,
-duplicate nodes, document prefixes, or other complex features supported by YAML.
+data serialization framework. There are no references, tags, types beyond the
+JSON-like core, unordered sets, duplicate keys, document prefixes, or other
+complex features supported by YAML.
 
 ## Goals
 
@@ -31,10 +32,13 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD",
 "SHOULD NOT", "RECOMMENDED",  "MAY", and "OPTIONAL" in this document are to be
 interpreted as described in RFC 2119.
 
+A _processor_ is any program that reads (a _parser_ or _deserializer_) or
+writes (an _emitter_ or _serializer_) AYML text.
+
 ## Language Overview
 
-This section provides an overview of AYML. 
-The full specification follows in a later section.
+This section provides a non-normative overview of AYML.
+The full specification follows in later sections.
 
 ### Collections
 
@@ -42,10 +46,6 @@ A block collection uses indentation for scope and begins each entry on its own l
 A block sequence indicates each entry with a dash and space `- `.
 A mapping uses a colon and space `: ` to mark each key/value pair. A mapping may not have duplicate keys.
 A comment begins with a `#`.
-
-#### Mapping Key Ordering
-
-AYML does not define an ordering for mapping keys. Implementations MAY preserve insertion order.
 
 **Example: Sequence of Scalars (ball players)**
 
@@ -55,7 +55,6 @@ AYML does not define an ordering for mapping keys. Implementations MAY preserve 
 - Ken Griffey
 ```
 
-
 **Example: Mapping Scalars to Scalars (player statistics)**
 
 ```
@@ -63,7 +62,6 @@ hr:  65    # Home runs
 avg: 0.278 # Batting average
 rbi: 147   # Runs Batted In
 ```
-
 
 **Example: Mapping Scalars to Sequences (ball clubs in each league)**
 
@@ -77,7 +75,6 @@ national:
   - Chicago Cubs
   - Atlanta Braves
 ```
-
 
 **Example: Sequence of Mappings (players' statistics)**
 
@@ -151,7 +148,8 @@ is_bad: false
 
 **Integer**
 
-An AYML decoder MUST support 64-bit signed integers.
+Integers are 64-bit signed values. Decimal, binary, octal, and hexadecimal
+notations are supported.
 
 ```
 decimal: 12345
@@ -162,7 +160,7 @@ hexadecimal: 0xC
 
 **Float**
 
-An AYML decoder MUST support 64-bit (double precision) floating point numbers, including `inf` and `nan`:
+Floats are 64-bit (double precision) values, including `inf` and `nan`:
 
 ```
 canonical: 1.23015e+3
@@ -218,14 +216,14 @@ optional field: null
 
 #### Comments
 
-A comment is a form of documentation that may be associated with a particular AYML element.
-By default, all comments are ignored during deserialization.
-A deserializer may decide to allow comments; if so, a comment may be associated to:
+A comment is a form of documentation that is associated with a particular
+AYML node. Deserializers into application data types typically ignore
+comments; processors that edit documents (formatters, linters, language
+servers) preserve them. Each comment belongs to exactly one node:
 
-* the node below it, if the comment is on its own line
-* the node it follows, if the comment follows a node
-
-Multi-line comments are allowed.
+* comment lines above a node belong to that node
+* a comment at the end of a line belongs to the node on that line
+* comment lines after the last entry of a collection belong to that collection
 
 **Example: Top and Side Comments**
 
@@ -238,6 +236,7 @@ network:
       ports:
         - 22 # Git (SSH)
         - 443 # Site
+        # - 8080 (disabled)
 ```
 
 A comment must not appear inside a scalar. Inside triple-quoted strings (`"""`),
@@ -317,15 +316,35 @@ Stack:
       """
 ```
 
-## BNF Grammar
+# Chapter: Data Model
 
-This section defines the BNF grammar for AYML.
-Whenever possible, basic structures are specified before the more complex
-structures using them in a "bottom up" fashion.
+An AYML document represents exactly one _node_. A node is either a scalar or a
+collection.
 
-Each rule is accompanied by one or more examples.
+* **null** — the single value `null`.
+* **bool** — `true` or `false`.
+* **int** — an integer in the range −2<sup>63</sup> to 2<sup>63</sup>−1.
+* **float** — an IEEE 754 binary64 value, including positive and negative
+  infinity and NaN.
+* **str** — a sequence of Unicode scalar values. Through escape sequences, a
+  string may contain any Unicode scalar value, including characters that may
+  not appear literally in an AYML document.
+* **sequence** — an ordered list of nodes.
+* **mapping** — a collection of key/value pairs. Keys are strings and MUST be
+  unique within a mapping. Values are nodes.
 
-### Production Syntax
+Two keys are equal if they are the same sequence of Unicode scalar values after
+quoted keys are unescaped. For example, `name` and `"name"` are the same key.
+
+AYML does not define an ordering for mapping keys. Implementations MAY preserve
+insertion order; the reference implementation does.
+
+Comments are not part of the data model seen by deserializers, but they are
+part of the document structure. See [Comment Association](#chapter-comment-association).
+
+# Chapter: Conventions
+
+## Production Syntax
 
 Productions are defined using the syntax `production-name ::= term`, where a
 term is either:
@@ -345,14 +364,11 @@ A lookaround:
 * `[ lookahead = term ]`, which matches the empty string if `term` would match.
 * `[ lookahead ≠ term ]`, which matches the empty string if `term` would not
   match.
-* `[ lookbehind = term ]`, which matches the empty string if `term` would match
-  beginning at any prior point on the line and ending at the current position.
 
 A special production:
 
 * `<start-of-line>`, which matches the empty string at the beginning of a line.
-* `<end-of-input>`, matches the empty string at the end of the input.
-* `<empty>`, which (always) matches the empty string.
+* `<end-of-input>`, which matches the empty string at the end of the input.
 
 A parenthesized term matches its contents.
 
@@ -360,6 +376,9 @@ A concatenation is `term-one term-two`, which matches `term-one` followed by `te
 
 An alternation is `term-one | term-two`, which matches the `term-one` if possible, or
 `term-two` otherwise.
+
+A difference is `term-one - term-two`, which matches `term-one` if `term-two`
+does not match the same text.
 
 A quantified term:
 
@@ -370,42 +389,24 @@ A quantified term:
 
 > Note: Quantified terms are always greedy.
 
-The order of precedence is parenthesization, then quantification, then concatenation, then alternation.
+The order of precedence is parenthesization, then quantification, then
+difference, then concatenation, then alternation.
 
-Some lines in a production definition may have a comment like:
+Comments in productions (`# like this`) are informative only.
 
-```
-production-a ::=
-  production-b      # clarifying comment
-```
+## Production Parameters
 
-These comments are meant to be informative only.
-For instance a comment that says `# not followed by non-ws char` just means
-that you should be aware that actual production rules will behave as described
-even though it might not be obvious from the content of that particular
-production alone.
-
-
-### Production Parameters
-
-Some productions have parameters in parentheses after the name, such as `c-triple-quoted(n)`.
-A parameterized production is shorthand for an (infinite) series of productions,
+Some productions have parameters in parentheses after the name. A
+parameterized production is shorthand for an (infinite) series of productions,
 each with a fixed value for each parameter.
 
-The parameters are as follows:
+* `n`, `m` : An indentation level, measured in spaces. May be any non-negative
+  integer.
+* `c` : Context to distinguish between block and flow parsing. One of:
+  * `BLOCK` — outside any flow collection
+  * `FLOW` — inside a flow collection
 
-* `n` : The current indentation level. May be any non-negative integer.
-* `m` : An auto-detected indentation level. See
-  [Indentation Auto-Detection](#indentation-auto-detection).
-* `c`: Context to distinguish between block and flow parsing. May be one of:
-  * `BLOCK` -- inside a block collection
-  * `FLOW` -- inside a flow collection
-
-
-### Production Naming Conventions
-
-To make it easier to follow production combinations, production names use a
-prefix-style naming convention.
+## Production Naming Conventions
 
 * `c-` : A production starting and ending with a special character.
 * `b-` : A production matching a single line break.
@@ -414,115 +415,87 @@ prefix-style naming convention.
 * `ns-` : A production starting and ending with a non-space character.
 * `l-` : A production matching complete line(s).
 
+## Errors
+
+A processor MUST reject any input that does not match the grammar or that
+violates a constraint stated in this specification. A processor MUST NOT
+recover from an error in a way that changes the meaning of the document (for
+example, by discarding the rest of a line).
 
 # Chapter: Character Productions
 
 ## Character Set
 
-To ensure readability, AYML uses only the printable subset of the Unicode character set.
+To ensure readability, AYML uses only the printable subset of the Unicode
+character set.
 
-The allowed character range excludes the C0 control block `x00-x1F` 
-(except for TAB `x09`, LF `x0A`, and CR `x0D` which are allowed),
-DEL `x7F`, the C1 control block `x80-x9F` (except for NEL `x85` which is allowed), 
-the surrogate block `xD800-xDFFF`, `xFFFE`, and `xFFFF`.
 ```
 c-printable ::=
-                         # 8 bit
     x09                  # Tab (\t)
   | x0A                  # Line feed (LF \n)
   | x0D                  # Carriage return (CR \r)
   | [x20-x7E]            # Printable ASCII
-                         # 16 bit
   | x85                  # Next Line (NEL)
   | [xA0-xD7FF]          # Basic Multilingual Plane (BMP)
   | [xE000-xFFFD]        # Additional Unicode Areas
-  | [x010000-x10FFFF]    # 32 bit
+  | [x010000-x10FFFF]    # Supplementary planes
 ```
 
+Every character of an AYML document MUST be in `c-printable`. Characters
+outside this set (such as NUL, DEL, and the C1 controls other than NEL) can
+only be represented through escape sequences in quoted strings.
 
 ## Character Encoding
 
-All characters in this specification are Unicode code points.
 AYML files MUST be encoded in UTF-8. No other encodings are supported.
 
-A byte order mark (BOM) MUST NOT appear in an AYML file.
+A byte order mark (BOM, `xFEFF`) MUST NOT appear at the start of an AYML file.
 
 ## Line Break Characters
 
 ```
 b-line-feed ::= x0A
 b-carriage-return ::= x0D
-b-char ::=
-    b-line-feed
-  | b-carriage-return
+b-char ::= b-line-feed | b-carriage-return
+
+b-break ::=
+    ( b-carriage-return b-line-feed )    # CR LF
+  | b-carriage-return                    # CR
+  | b-line-feed                          # LF
 ```
 
-All other characters, including the form feed (`x0C`), are considered to be
-non-break characters.
+All other characters, including form feed and NEL, are non-break characters.
 
 ```
 nb-char ::= c-printable - b-char
 ```
 
-Line breaks are interpreted differently by different systems and have multiple
-widely used formats.
+Line breaks inside triple-quoted string content MUST be normalized to a single
+line feed (`x0A`). Outside scalar content, any line break may be used.
+
+A _line_ is a maximal sequence of `nb-char` terminated by a `b-break` or by
+the end of the input.
 
 ```
-b-break ::=
-  ( b-carriage-return b-line-feed )    # CR LF
-  | b-carriage-return                  # CR
-  | b-line-feed                        # LF
+b-line-end ::= b-break | <end-of-input>
 ```
-
-Line breaks inside scalar content MUST be _normalized_ by the AYML processor.
-Each such line break MUST be parsed into a single line feed character.
-Outside scalar content, AYML allows any line break to be used to terminate lines.
-
 
 ## White Space Characters
-
-AYML recognizes two _white space_ characters: _space_ and _tab_.
 
 ```
 s-space ::= x20
 s-tab ::= x09
 s-white ::= s-space | s-tab
-```
 
-The rest of the printable non-break characters are considered to be
-non-space characters.
-
-```
 ns-char ::= nb-char - s-white
 ```
 
-
 ## Miscellaneous Characters
 
-A decimal digit is used for numbers:
-
 ```
-ns-dec-digit ::= [x30-x39]             # 0-9
-```
-
-A hexadecimal digit is used for escape sequences:
-
-```
-ns-hex-digit ::=
-    ns-dec-digit         # 0-9
-  | [x41-x46]            # A-F
-  | [x61-x66]            # a-f
-```
-
-An octal digit:
-
-```
-ns-oct-digit ::= [x30-x37]             # 0-7
-```
-
-A binary digit:
-
-```
+ns-dec-digit ::= [x30-x39]                                # 0-9
+ns-hex-digit ::= ns-dec-digit | [x41-x46] | [x61-x66]     # 0-9 A-F a-f
+ns-oct-digit ::= [x30-x37]                                # 0-7
 ns-bin-digit ::= '0' | '1'
 ```
 
@@ -530,225 +503,149 @@ ns-bin-digit ::= '0' | '1'
 
 _Indicators_ are characters that have special semantics.
 
-"`-`" (`x2D`, hyphen) denotes a block sequence entry.
-
 ```
-c-sequence-entry ::= '-'
-```
-
-"`:`" (`x3A`, colon) denotes a mapping value.
-
-```
-c-mapping-value ::= ':'
-```
-
-"`,`" (`x2C`, comma) separates entries in a flow collection.
-
-```
-c-collect-entry ::= ','
-```
-
-"`[`" (`x5B`, left bracket) starts a flow sequence.
-
-```
+c-sequence-entry ::= '-'     # block sequence entry
+c-mapping-value  ::= ':'     # mapping value
+c-collect-entry  ::= ','     # flow collection entry separator
 c-sequence-start ::= '['
+c-sequence-end   ::= ']'
+c-mapping-start  ::= '{'
+c-mapping-end    ::= '}'
+c-comment        ::= '#'
+c-double-quote   ::= '"'
+c-escape         ::= '\'
+
+c-indicator ::=
+    c-sequence-entry | c-mapping-value | c-collect-entry
+  | c-sequence-start | c-sequence-end
+  | c-mapping-start | c-mapping-end
+  | c-comment | c-double-quote | c-escape
+
+c-flow-indicator ::=
+    c-collect-entry
+  | c-sequence-start | c-sequence-end
+  | c-mapping-start | c-mapping-end
 ```
 
-"`]`" (`x5D`, right bracket) ends a flow sequence.
+The single quote is _reserved_: it may not begin a bare string, so that
+YAML-style single-quoted strings are rejected rather than silently read with
+their quotes.
 
 ```
-c-sequence-end ::= ']'
-```
-
-"`{`" (`x7B`, left brace) starts a flow mapping.
-
-```
-c-mapping-start ::= '{'
-```
-
-"`}`" (`x7D`, right brace) ends a flow mapping.
-
-```
-c-mapping-end ::= '}'
-```
-
-"`#`" (`x23`, octothorpe) denotes a comment.
-
-```
-c-comment ::= '#'
-```
-
-"`"`" (`x22`, double quote) surrounds a double-quoted scalar.
-
-```
-c-double-quote ::= '"'
-```
-
-"`\`" (`x5C`, backslash) begins an escape sequence in double-quoted and
-triple-quoted scalars.
-
-```
-c-escape ::= '\'
+c-reserved ::= '''
 ```
 
 > **Note:** AYML does not use the following YAML indicators: `?` (explicit
-> mapping key), `&` (anchor), `*` (alias), `!` (tag), `>` (folded scalar),
-> `%` (directive), `@`, or `` ` `` (reserved).
-
-The union of all indicator characters:
-
-```
-c-indicator ::=
-    c-sequence-entry     # '-'
-  | c-mapping-value      # ':'
-  | c-collect-entry      # ','
-  | c-sequence-start     # '['
-  | c-sequence-end       # ']'
-  | c-mapping-start      # '{'
-  | c-mapping-end        # '}'
-  | c-comment            # '#'
-  | c-double-quote       # '"'
-  | c-escape             # '\'
-```
-
-Flow indicators are the subset that denote structure in flow collections:
-
-```
-c-flow-indicator ::=
-    c-collect-entry      # ','
-  | c-sequence-start     # '['
-  | c-sequence-end       # ']'
-  | c-mapping-start      # '{'
-  | c-mapping-end        # '}'
-```
-
+> mapping key), `&` (anchor), `*` (alias), `!` (tag), `|` and `>` (block
+> scalars), `%` (directive), `@`, or `` ` ``. These characters have no special
+> meaning in AYML.
 
 ## Escape Sequences
 
-All non-printable characters MUST be _escaped_.
-Escape sequences are interpreted in double-quoted and triple-quoted scalars.
+Escape sequences are interpreted in double-quoted and triple-quoted strings.
 In bare strings, the "`\`" character has no special meaning.
 
 ```
 c-ns-esc-char ::=
     c-escape
     (
-        '0'                   # Null (x00)
-      | 'a'                   # Bell (x07)
-      | 'b'                   # Backspace (x08)
-      | 't'                   # Horizontal tab (x09)
-      | 'n'                   # Line feed (x0A)
-      | 'v'                   # Vertical tab (x0B)
-      | 'f'                   # Form feed (x0C)
-      | 'r'                   # Carriage return (x0D)
-      | 'e'                   # Escape (x1B)
-      | x20                   # Space (x20)
-      | '"'                   # Double quote (x22)
-      | '/'                   # Slash (x2F)
-      | '\'                   # Backslash (x5C)
-      | ( 'x' ns-hex-digit{2} )    # 8-bit Unicode
-      | ( 'u' ns-hex-digit{4} )    # 16-bit Unicode
-      | ( 'U' ns-hex-digit{8} )    # 32-bit Unicode
+        '0'                        # Null (x00)
+      | 'a'                        # Bell (x07)
+      | 'b'                        # Backspace (x08)
+      | 't'                        # Horizontal tab (x09)
+      | 'n'                        # Line feed (x0A)
+      | 'v'                        # Vertical tab (x0B)
+      | 'f'                        # Form feed (x0C)
+      | 'r'                        # Carriage return (x0D)
+      | 'e'                        # Escape (x1B)
+      | x20                        # Space (x20)
+      | '"'                        # Double quote (x22)
+      | '/'                        # Slash (x2F)
+      | '\'                        # Backslash (x5C)
+      | ( 'x' ns-hex-digit{2} )    # Code point x00 – xFF
+      | ( 'u' ns-hex-digit{4} )    # Code point x0000 – xFFFF
+      | ( 'U' ns-hex-digit{8} )    # Code point x00000000 – x10FFFF
     )
 ```
 
+The code point denoted by a `\x`, `\u`, or `\U` escape MUST be a Unicode scalar
+value: surrogates (`xD800`–`xDFFF`) and values above `x10FFFF` are errors.
+There are no surrogate pairs; use `\U` for supplementary characters.
+
 Inside triple-quoted strings, a `\` immediately followed by a line break
-suppresses that line break (line continuation). The next line's content is
-joined directly to the current line.
+suppresses that line break (line continuation).
 
 ```
 c-escape-break ::= c-escape b-break
 ```
 
-
-# Chapter: Indentation and Separation
+# Chapter: Indentation, Separation, and Comments
 
 ## Indentation
 
-AYML uses spaces for indentation. Tabs MUST NOT be used for indentation.
-The indentation level is tracked as a parameter `n` representing the number
-of leading spaces.
+AYML uses spaces for indentation. The _indentation_ of a line is the number of
+leading space characters.
 
 ```
 s-indent(n) ::= s-space{n}
 ```
 
-```
-s-indent-less-than(n) ::=
-    s-space{m}    # where m < n
-```
+Tabs MUST NOT be used for indentation: the leading white space of every line
+that is not blank MUST consist of spaces only, as must the white space between
+a block sequence's `-` and its value (which sets the indentation of a compact
+collection). Elsewhere, tabs may be used for separation, and blank lines may
+contain tabs.
 
-```
-s-indent-less-or-equal(n) ::=
-    s-space{m}    # where m <= n
-```
-
-### Indentation Auto-Detection
-
-When a block collection or scalar value appears on a subsequent line (for
-example, as the value of a mapping entry), the indentation level `m` is
-_auto-detected_ from the first content line. The auto-detected level MUST
-satisfy any stated constraint (e.g., `m > n`). All subsequent entries or
-content lines within the same block MUST use the same indentation level `m`.
-
-In the grammar, auto-detected indentation is written as a free variable `m`
-with a constraint comment.
+The entries of a block collection all begin at the same indentation. When a
+nested block collection begins on a new line, its indentation is detected from
+its first entry and MUST satisfy the constraints stated for that collection.
 
 ## Separation
-
-A separation in line is one or more white space characters.
 
 ```
 s-separate-in-line ::= s-white+
 ```
 
-In flow collections, whitespace includes line breaks and comments:
+## Comments
 
-```
-s-flow-line-comment ::= s-separate-in-line c-nb-comment-text? b-break
-```
-
-```
-s-flow-white ::= s-white | s-flow-line-comment | b-break
-```
-
-
-# Chapter: Comments
-
-A comment is indicated by a `#` character. When a `#` appears preceded by
-whitespace (or at the start of a line) in a non-scalar context, it begins a
-comment that extends to the end of the line.
-
-Inside triple-quoted strings (`"""`), all content including `#` characters
-is literal string content, not comments.
+A comment begins with `#` and extends to the end of the line. A `#` starts a
+comment only when it is the first non-white-space character of a line or when
+it is preceded by white space. Anywhere else outside a quoted string, a `#` is
+an error. For example, `password: abc#123` is rejected; write
+`password: "abc#123"` instead.
 
 ```
 c-nb-comment-text ::= c-comment nb-char*
 ```
 
-An inline comment (trailing a node on the same line):
+The _text_ of a comment is the content after the `#`, with one leading space
+removed if present and with trailing white space removed.
+
+Every content line ends with optional white space and an optional comment:
 
 ```
-s-b-comment ::=
-    ( s-separate-in-line c-nb-comment-text? )?
-    b-break
+s-l-end ::= ( s-separate-in-line c-nb-comment-text | s-white* ) b-line-end
 ```
 
-A full-line comment:
+A line that contains only a comment is a _comment line_. It may have any
+indentation (made of spaces).
 
 ```
-l-comment(n) ::=
-    s-indent-less-or-equal(n)
-    c-nb-comment-text
-    b-break
+l-comment ::= s-space* c-nb-comment-text b-line-end
 ```
 
-Consecutive comment lines form a multi-line comment:
+A blank line contains only white space.
 
 ```
-l-comment-block(n) ::= l-comment(n)+
+l-blank ::= s-white* b-break
 ```
 
+Between the lines of block collections, blank lines and comment lines may
+appear. These are collectively called _gaps_.
+
+```
+l-gap ::= l-blank | l-comment
+```
 
 # Chapter: Scalar Productions
 
@@ -758,38 +655,33 @@ l-comment-block(n) ::= l-comment(n)+
 ns-null ::= "null"
 ```
 
-**Example:**
-
-```
-optional field: null
-```
-
-
 ## Boolean
 
 ```
 ns-bool ::= "true" | "false"
 ```
 
-**Example:**
-
-```
-is_good: true
-is_bad: false
-```
-
-
 ## Integer
 
-An AYML decoder MUST support 64-bit signed integers.
+```
+ns-sign ::= '-' | '+'
 
-```
+ns-dec-int ::= '0' | ( [x31-x39] ns-dec-digit* )     # no leading zeros
+
 ns-integer ::=
-    ( '-' | '+' )? ns-dec-digit+                    # Decimal
-  | ( '-' | '+' )? "0b" ns-bin-digit+               # Binary
-  | ( '-' | '+' )? "0o" ns-oct-digit+               # Octal
-  | ( '-' | '+' )? "0x" ns-hex-digit+               # Hexadecimal
+    ns-sign? ns-dec-int                             # Decimal
+  | ns-sign? "0b" ns-bin-digit+                     # Binary
+  | ns-sign? "0o" ns-oct-digit+                     # Octal
+  | ns-sign? "0x" ns-hex-digit+                     # Hexadecimal
 ```
+
+An integer whose value lies outside the 64-bit signed range is an error; it is
+not converted to a float or a string. Note that `-0x8000000000000000` is the
+minimum integer.
+
+Decimal integers MUST NOT have leading zeros. A bare word like `0755` or
+`02134` does not match `ns-integer` and is therefore a string; write `0o755`
+for an octal integer.
 
 **Example:**
 
@@ -801,20 +693,21 @@ octal: 0o14
 hexadecimal: 0xC
 ```
 
-
 ## Float
 
-An AYML decoder MUST support 64-bit (double precision) floating point numbers.
+```
+ns-exponent ::= ( 'e' | 'E' ) ns-sign? ns-dec-digit+
 
-```
 ns-float ::=
-    ( '-' | '+' )? ns-dec-digit+ '.' ns-dec-digit+
-        ( ( 'e' | 'E' ) ( '-' | '+' )? ns-dec-digit+ )?    # Fixed/exponential
-  | ( '-' | '+' )? ns-dec-digit+
-        ( 'e' | 'E' ) ( '-' | '+' )? ns-dec-digit+         # Pure exponential
-  | ( '-' | '+' )? "inf"                                   # Infinity
-  | "nan"                                                  # Not a number
+    ns-sign? ns-dec-int '.' ns-dec-digit+ ns-exponent?    # Fixed/exponential
+  | ns-sign? ns-dec-int ns-exponent                       # Pure exponential
+  | ns-sign? "inf"                                        # Infinity
+  | "nan"                                                 # Not a number
 ```
+
+A float is the binary64 value nearest to its decimal value (round to nearest,
+ties to even). A finite literal whose magnitude is too large to represent
+(for example `1e400`) is an error; it does not become infinity.
 
 **Example:**
 
@@ -826,7 +719,6 @@ negative infinity: -inf
 not a number: nan
 ```
 
-
 ## Double-Quoted String
 
 A double-quoted string is delimited by `"` characters and supports escape
@@ -836,17 +728,8 @@ sequences. Double-quoted strings are single-line only.
 nb-double-char ::=
     c-ns-esc-char
   | ( nb-char - c-double-quote - c-escape )
-```
 
-```
-nb-double-one-line ::= nb-double-char*
-```
-
-```
-c-double-quoted ::=
-    c-double-quote
-    nb-double-one-line
-    c-double-quote
+c-double-quoted ::= c-double-quote nb-double-char* c-double-quote
 ```
 
 **Example:**
@@ -856,42 +739,33 @@ unicode: "Sosa did fine.\u263A"
 control: "\b1998\t1999\t2000\n"
 ```
 
-
 ## Bare String
 
-A bare (unquoted) string has no delimiters. Its content is determined by
-context. Bare strings are single-line only. They undergo scalar resolution —
-if the content matches `null`, `true`, `false`, an integer, or a float
-pattern, it is parsed as that type rather than as a string.
+A bare (unquoted) string has no delimiters. Bare strings are single-line only.
+In value position they undergo [scalar resolution](#scalar-resolution).
 
-A `#` character is not allowed in bare strings. Use a quoted string for
-values containing `#`.
+A bare string cannot contain `#` or `: ` (a colon followed by white space or the
+end of the line), cannot begin with an indicator other than `-` or `:`, and
+cannot begin with `'`. A bare string may begin with `-` or `:` only if the next
+character could continue the string. Leading and trailing white space is not
+part of a bare string.
 
-In a **flow context**, bare strings are additionally terminated by flow
-indicators (`,`, `]`, `}`).
-
-```
-ns-plain-first-char ::=
-    ( ns-char - c-indicator )
-  | ( ( '-' | ':' ) [ lookahead = ns-char ] )
-```
+In a **flow context**, bare strings additionally cannot contain flow indicators
+(`,`, `[`, `]`, `{`, `}`).
 
 ```
-ns-plain-char(BLOCK) ::=
-    ( ns-char - c-comment - c-mapping-value )
-  | ( ':' [ lookahead = ns-char ] )          # ':' not followed by space
-```
+ns-plain-safe(BLOCK) ::= ns-char - c-comment
+ns-plain-safe(FLOW)  ::= ns-char - c-comment - c-flow-indicator
 
-```
-ns-plain-char(FLOW) ::=
-    ns-plain-char(BLOCK)
-  - c-flow-indicator
-```
+ns-plain-first-char(c) ::=
+    ( ns-plain-safe(c) - c-indicator - c-reserved )
+  | ( ( c-sequence-entry | c-mapping-value ) [ lookahead = ns-plain-safe(c) ] )
 
-```
-ns-bare-string(c) ::=
-    ns-plain-first-char
-    ( s-white* ns-plain-char(c) )*
+ns-plain-char(c) ::=
+    ( ns-plain-safe(c) - c-mapping-value )
+  | ( c-mapping-value [ lookahead = ns-plain-safe(c) ] )
+
+ns-bare-string(c) ::= ns-plain-first-char(c) ( s-white* ns-plain-char(c) )*
 ```
 
 **Example:**
@@ -899,56 +773,52 @@ ns-bare-string(c) ::=
 ```
 plain: This unquoted scalar is single-line.
 url: https://example.com/path
+glob: **/*.rs
 ```
-
 
 ## Triple-Quoted String
 
-A triple-quoted string begins with `"""` followed by a line break, and ends
-with `"""` on its own line. The indentation of the closing `"""` determines
-the whitespace stripping level — that many leading spaces are removed from
-each content line (like Swift's multi-line string literals).
-
-Escape sequences are supported (same as double-quoted strings). A `\` at the
-end of a line suppresses the line break, joining the next line directly to
-the current one.
-
-All content — including `#` characters, quotes, and other indicator
-characters — is literal string content (not comments or structure).
+A triple-quoted string begins with `"""` at the end of a line and ends with
+`"""` at the start of a later line (after indentation). The indentation `m` of
+the closing `"""` determines the whitespace stripping level: that many leading
+spaces are removed from each content line, like Swift's multi-line string
+literals.
 
 ```
 c-triple-quote ::= '"""'
-```
 
-```
 nb-triple-char ::=
     c-ns-esc-char
   | ( nb-char - c-escape )
+
+l-triple-content(m) ::=
+    s-indent(m) nb-triple-char* ( c-escape-break s-indent(m) nb-triple-char* )*
+  | s-space{0,m}                                   # blank line, see below
+
+c-triple-quoted(n) ::=
+    c-triple-quote s-white* b-break
+    ( l-triple-content(m) b-break )*
+    s-indent(m) c-triple-quote                     # where m >= n
 ```
 
-The indentation level `m` is determined by the indentation of the closing
-`"""`. Each content line MUST begin with at least `m` leading spaces, which
-are stripped. Blank lines (empty or containing only whitespace) are preserved
-as empty lines and need not have `m` spaces. A `\` at the end of a line
-(before the line break) suppresses the line break; the next line's content
-(after stripping `m` leading spaces) is joined directly to the current line.
+The rules for a triple-quoted string are:
 
-```
-l-triple-content-line(m) ::=
-    s-indent(m) nb-triple-char*
-    ( c-escape-break s-indent(m) nb-triple-char* )*
-```
-
-```
-l-triple-blank-line ::= s-space*
-```
-
-```
-c-triple-quoted ::=
-    c-triple-quote b-break
-    ( ( l-triple-content-line(m) | l-triple-blank-line ) b-break )*
-    s-indent(m) c-triple-quote
-```
+* The opening `"""` MUST be followed by optional white space and a line break.
+* The closing delimiter is the first subsequent line whose first non-space
+  characters are `"""`. A content line that must begin with `"""` escapes a
+  quote (`\"""`).
+* The closing indentation `m` MUST be at least the indentation `n` of the block
+  entry that contains the string (zero at the top level).
+* Every content line MUST begin with `m` spaces, which are removed. A line that
+  consists of fewer than `m` spaces and nothing else is an empty line.
+* The content is the stripped lines joined by line feeds. The line break
+  before the closing delimiter is _not_ part of the content; to end the
+  string with a line feed, leave an empty line before the closing `"""`.
+* Escape sequences are interpreted. A `\` at the end of a content line
+  removes the line break, joining the next line (after removing its `m`
+  spaces) to the current one.
+* All other characters, including `#`, `"` and indicators, are literal content.
+* Triple-quoted strings MUST NOT be used as mapping keys.
 
 **Example:**
 
@@ -974,25 +844,39 @@ code: """
   """
 ```
 
-
 ## Scalar Resolution
 
-When parsing an unquoted (bare) scalar value, the parser SHOULD attempt to
-match in this order:
+A quoted string (`c-double-quoted`) or triple-quoted string (`c-triple-quoted`)
+is always a string regardless of its content.
+
+A bare scalar in value position is resolved by trying the following in order;
+the first match determines the type:
 
 1. `ns-null`
 2. `ns-bool`
 3. `ns-integer`
 4. `ns-float`
-5. `ns-bare-string`
+5. otherwise, the bare scalar is a string
 
-A quoted string (`c-double-quoted`) or triple-quoted string
-(`c-triple-quoted`) is always a string regardless of its content.
+Each pattern must match the entire bare scalar.
+
+Mapping keys are never resolved: a bare key is always a string.
+
+```
+ns-scalar(n,c) ::=
+    c-triple-quoted(n)
+  | c-double-quoted
+  | ns-null
+  | ns-bool
+  | ns-integer
+  | ns-float
+  | ns-bare-string(c)
+```
 
 ### Reserved Words
 
 The following bare words are interpreted as non-string types and MUST be
-quoted to be used as strings:
+quoted to be used as string values:
 
 | Word    | Type  |
 | ------- | ----- |
@@ -1004,92 +888,55 @@ quoted to be used as strings:
 | `-inf`  | float |
 | `nan`   | float |
 
-There are no other implicit type conversions.
-Words like `yes`, `no`, `on`, `off`, and date-like strings
-such as `2001-01-23` are parsed as strings.
-
-```
-ns-scalar(c) ::=
-    c-double-quoted
-  | c-triple-quoted
-  | ns-null
-  | ns-bool
-  | ns-integer
-  | ns-float
-  | ns-bare-string(c)
-```
-
+Matching is case-sensitive. There are no other implicit type conversions.
+Words like `yes`, `no`, `on`, `off`, `NULL`, `True`, `NaN`, numbers with
+leading zeros, and date-like strings such as `2001-01-23` are strings.
 
 # Chapter: Collection Productions
 
-## Block Gaps
-
-Between block collection entries, blank lines and comment lines are allowed.
-These are collectively called _gaps_.
-
-```
-l-block-blank-line ::= s-white* b-break
-```
-
-```
-l-block-gap(n) ::=
-    l-block-blank-line
-  | l-comment(n)
-```
-
 ## Block Sequence
 
-A block sequence is a series of entries, each indicated by a `- ` (dash
-followed by a space). Each entry begins at the same indentation level.
+A block sequence is a series of entries, each indicated by a `-` followed by
+one or more spaces. Each entry begins at the same indentation `n`.
 
-A block sequence entry indicator `- ` may provide implicit indentation for
-the entry. An AYML deserializer MUST accept a block sequence entry with
-regular or implicit indentation. An AYML serializer MUST produce a block
-sequence entry with regular indentation.
+The entry value MUST begin on the same line as the `-`. A `-` followed by only
+white space or a comment is an error (there are no empty nodes in AYML).
 
-The entry value MUST begin on the same line as `- `. A `- ` followed by
-only whitespace and a line break is a parse error (there are no empty nodes
-in AYML). To nest block collections inside a sequence, use flow syntax
-(`[]`, `{}`) or compact mapping notation.
+The entry value is one of:
 
-When a sequence entry contains a mapping, the first mapping entry may appear
-on the same line as `- ` (compact notation). The remaining entries appear on
-subsequent lines at indentation `n+2`.
+* a scalar or flow collection,
+* a _compact mapping_: a block mapping whose first entry begins on the same
+  line as the `-`, or
+* a _compact sequence_: a block sequence whose first entry begins on the same
+  line as the `-`.
 
-```
-ns-compact-mapping-entry(n) ::=
-    ns-mapping-key(BLOCK)
-    s-white*
-    c-mapping-value
-    (
-        s-white+ ns-flow-node(BLOCK)                  # Value on same line
-      | s-b-comment                                    # Value on next line(s)
-        ( l-block-sequence(m)                          # Sequence, m >= n
-        | l-block-mapping(m)                           # Nested mapping, m > n
-        | s-indent(m) ns-flow-node(BLOCK)              # Scalar/flow value, m > n
-        )
-    )
-```
+The indentation of a compact collection is the column at which its first entry
+begins. Its remaining entries begin at that same indentation on subsequent
+lines.
 
-```
-ns-compact-mapping(n) ::=
-    ns-compact-mapping-entry(n)
-    ( b-break l-block-gap(n)* l-block-mapping-entry(n) )*
-```
-
-```
-l-block-seq-entry(n) ::=
-    s-indent(n)
-    c-sequence-entry s-white
-    ( ns-compact-mapping(n+2)                    # Compact mapping
-    | ns-flow-node(BLOCK)                        # Scalar or flow collection
-    )
-```
+An AYML deserializer MUST accept a block sequence whose entries are at the same
+indentation as their parent mapping key ("implicit indentation"). An AYML
+serializer MUST produce block sequences with regular indentation (nested two
+spaces deeper than the parent key) and exactly one space after each `-`.
 
 ```
 l-block-sequence(n) ::=
-    l-block-seq-entry(n)
-    ( b-break l-block-gap(n)* l-block-seq-entry(n) )*
+    s-indent(n) c-l-block-seq-entry(n)
+    ( l-gap* s-indent(n) c-l-block-seq-entry(n) )*
+
+c-l-block-seq-entry(n) ::=
+    c-sequence-entry s-space{k}          # k >= 1; let m = n + 1 + k
+    ( ns-l-compact-sequence(m)
+    | ns-l-compact-mapping(m)
+    | ns-flow-node(n,BLOCK) s-l-end )
+
+ns-l-compact-sequence(m) ::=
+    c-l-block-seq-entry(m)
+    ( l-gap* s-indent(m) c-l-block-seq-entry(m) )*
+
+ns-l-compact-mapping(m) ::=
+    ns-l-block-map-entry(m)
+    ( l-gap* s-indent(m) ns-l-block-map-entry(m) )*
 ```
 
 **Example:**
@@ -1097,56 +944,44 @@ l-block-sequence(n) ::=
 ```
 - Mark McGwire
 - Sammy Sosa
-- Ken Griffey
+- - nested
+  - sequence
+-   name: aligned
+    value: compact mapping
 ```
-
 
 ## Block Mapping
 
-A block mapping is a series of key/value pairs.
-A mapping MUST NOT have duplicate keys (this is a semantic constraint enforced
-by the parser, not expressible in the grammar).
+A block mapping is a series of key/value pairs, each beginning at the same
+indentation `n`. A mapping MUST NOT have duplicate keys.
 
-A mapping key is a single-line scalar: a bool, integer, or string.
-Float and null keys are not allowed. Triple-quoted strings are not
-allowed as mapping keys because they span multiple lines.
-
-```
-ns-mapping-key(c) ::=
-    c-double-quoted
-  | ns-bool
-  | ns-integer
-  | ns-bare-string(c)
-```
-
-A mapping key MUST NOT resolve to null or float. To use the string `"null"` as
-a key, quote it.
-
-A mapping entry value may appear on the same line as its key, or on the next line.
-If the value is on the next line, its indentation level `m` is auto-detected and
-MUST satisfy `m > n`, except for sequences where `m >= n` is permitted due to
-implicit indentation.
+A mapping key is a double-quoted string or a bare string, on a single line.
+White space may appear between the key and the `:`. The `:` MUST be followed by
+white space or the end of the line.
 
 ```
-l-block-mapping-entry(n) ::=
-    s-indent(n)
-    ns-mapping-key(BLOCK)
-    s-white*
-    c-mapping-value
-    (
-        s-white+ ns-flow-node(BLOCK)                  # Value on same line
-      | s-b-comment                                    # Value on next line(s)
-        ( l-block-sequence(m)                          # Sequence, m >= n
-        | l-block-mapping(m)                           # Nested mapping, m > n
-        | s-indent(m) ns-flow-node(BLOCK)              # Scalar/flow value, m > n
-        )
-    )
+ns-mapping-key(c) ::= c-double-quoted | ns-bare-string(c)
 ```
 
+A mapping value either begins on the same line as its key, or is a block
+collection beginning on a later line:
+
+* A same-line value is a scalar or a flow collection.
+* A value on later lines MUST be a block collection. Its indentation `m` MUST
+  satisfy `m > n` for a mapping, or `m >= n` for a sequence. Scalars and flow
+  collections cannot begin on the line after their key.
+
 ```
+ns-l-block-map-entry(n) ::=
+    ns-mapping-key(BLOCK) s-white* c-mapping-value
+    ( s-separate-in-line ns-flow-node(n,BLOCK) s-l-end
+    | s-l-end l-gap*
+      ( l-block-sequence(m)                          # m >= n
+      | l-block-mapping(m) ) )                       # m > n
+
 l-block-mapping(n) ::=
-    l-block-mapping-entry(n)
-    ( b-break l-block-gap(n)* l-block-mapping-entry(n) )*
+    s-indent(n) ns-l-block-map-entry(n)
+    ( l-gap* s-indent(n) ns-l-block-map-entry(n) )*
 ```
 
 **Example:**
@@ -1155,31 +990,59 @@ l-block-mapping(n) ::=
 hr:  65
 avg: 0.278
 rbi: 147
+players:
+  - Mark McGwire
+  - Sammy Sosa
 ```
 
+## Flow Collections
 
-## Flow Sequence
+A flow sequence is a comma-separated list within square brackets `[]`. A flow
+mapping is a comma-separated list of key/value pairs within curly braces `{}`.
+Trailing commas are allowed. Flow collections may span multiple lines and may
+contain comments.
 
-A flow sequence is a comma-separated list within square brackets `[]`.
-Trailing commas are allowed. Flow sequences may span multiple lines.
-Indentation is not significant inside flow collections.
+Indentation is not significant inside flow collections, but every line after
+the first MUST be indented at least `n` spaces, where `n` is the indentation of
+the block entry containing the flow collection (zero at the top level).
 
 ```
-ns-flow-seq-entry ::= ns-flow-node(FLOW)
-```
+s-flow-sep(n) ::=
+    s-white
+  | b-break s-indent(m)                  # m >= n, spaces only
+  | s-separate-in-line c-nb-comment-text
+  | <start-of-line> c-nb-comment-text    # after the indentation of a line
 
-```
-c-flow-sequence ::=
-    c-sequence-start
-    s-flow-white*
+ns-flow-seq-entry(n) ::= ns-flow-node(n,FLOW)
+
+c-flow-sequence(n) ::=
+    c-sequence-start s-flow-sep(n)*
     (
-        ns-flow-seq-entry
-        ( s-flow-white* c-collect-entry s-flow-white* ns-flow-seq-entry )*
-        ( s-flow-white* c-collect-entry )?     # Optional trailing comma
+        ns-flow-seq-entry(n) s-flow-sep(n)*
+        ( c-collect-entry s-flow-sep(n)* ns-flow-seq-entry(n) s-flow-sep(n)* )*
+        ( c-collect-entry s-flow-sep(n)* )?
     )?
-    s-flow-white*
     c-sequence-end
+
+ns-flow-map-entry(n) ::=
+    ns-mapping-key(FLOW) s-flow-sep(n)*
+    c-mapping-value s-flow-sep(n)*
+    ns-flow-node(n,FLOW)
+
+c-flow-mapping(n) ::=
+    c-mapping-start s-flow-sep(n)*
+    (
+        ns-flow-map-entry(n) s-flow-sep(n)*
+        ( c-collect-entry s-flow-sep(n)* ns-flow-map-entry(n) s-flow-sep(n)* )*
+        ( c-collect-entry s-flow-sep(n)* )?
+    )?
+    c-mapping-end
 ```
+
+Inside a flow mapping, a bare key followed directly by `:` and a non-space
+character continues the key (`{a:1}` has the single key `a:1` and no value,
+and is therefore an error). Quoted keys may be followed directly by `:`
+(`{"a":1}`).
 
 **Example:**
 
@@ -1188,45 +1051,12 @@ c-flow-sequence ::=
 - [Mark McGwire, 65, 0.278]
 ```
 
-
-## Flow Mapping
-
-A flow mapping is a comma-separated list of key/value pairs within curly
-braces `{}`. Trailing commas are allowed. Flow mappings may span multiple
-lines.
-
 ```
-ns-flow-mapping-entry ::=
-    ns-mapping-key(FLOW)
-    s-flow-white*
-    c-mapping-value
-    s-flow-white*
-    ns-flow-node(FLOW)
-```
-
-```
-c-flow-mapping ::=
-    c-mapping-start
-    s-flow-white*
-    (
-        ns-flow-mapping-entry
-        ( s-flow-white* c-collect-entry s-flow-white* ns-flow-mapping-entry )*
-        ( s-flow-white* c-collect-entry )?     # Optional trailing comma
-    )?
-    s-flow-white*
-    c-mapping-end
-```
-
-**Example:**
-
-```
-Mark McGwire: {hr: 65, avg: 0.278}
 Sammy Sosa: {
-  hr: 63,
+  hr: 63,   # home runs
   avg: 0.288,
 }
 ```
-
 
 # Chapter: Node and Document Productions
 
@@ -1235,35 +1065,32 @@ Sammy Sosa: {
 A flow node is a scalar or flow collection:
 
 ```
-ns-flow-node(c) ::=
-    ns-scalar(c)
-  | c-flow-sequence
-  | c-flow-mapping
+ns-flow-node(n,c) ::=
+    c-flow-sequence(n)
+  | c-flow-mapping(n)
+  | ns-scalar(n,c)
 ```
 
-A block node is a scalar, flow collection, or block collection:
+A block node is a block collection or a flow node:
 
 ```
-ns-block-node(n) ::=
+ns-l-block-node(n) ::=
     l-block-sequence(n)
   | l-block-mapping(n)
-  | ns-flow-node(BLOCK)
+  | s-indent(n) ns-flow-node(n,BLOCK) s-l-end
 ```
-
-> Note: Block collections are tried before flow nodes so that a mapping
-> key followed by `: ` is not consumed as a bare string.
-
 
 ## Document
 
-An AYML file contains exactly one document. A document is optional leading
-comments, a single root node, and optional trailing comments or blank lines:
+An AYML file contains exactly one document. A document is a single root node
+starting at column zero, surrounded by optional blank lines and comment lines.
+A document with no root node is an error.
 
 ```
 l-ayml-document ::=
-    l-comment-block(0)?
-    ns-block-node(0)
-    ( b-break l-block-gap(0)* )?
+    l-gap*
+    ns-l-block-node(0)
+    l-gap*
     <end-of-input>
 ```
 
@@ -1274,3 +1101,100 @@ l-ayml-document ::=
 host: localhost
 port: 8080
 ```
+
+# Chapter: Comment Association
+
+This chapter is normative for processors that preserve comments. Every comment
+in a valid document belongs to exactly one node, as one of three kinds:
+
+* the node's **leading comment** — comment lines before the node,
+* the node's **inline comment** — a comment at the end of the node's line, or
+* the node's **trailing comment** — comment lines after the last entry of a
+  collection, inside that collection.
+
+Consecutive comment lines that form one leading or trailing comment are joined
+with line feeds. A blank line between two comment lines of the same group is
+represented as an empty line in the joined text; blank lines before the first
+or after the last comment line of a group are not represented. An empty comment
+(`#` alone) is also an empty line. Serializers emit empty lines as blank lines.
+
+## Leading Comments
+
+The comment lines between the previous entry (or the start of the document or
+collection) and an entry belong to that entry's node. For a mapping entry, the
+leading comment is attached to the entry's value node.
+
+When several nodes begin on the same line, comment lines before that line
+belong to the outermost of them: comment lines before a root block collection
+belong to the root node, not its first entry, and comment lines before a
+sequence entry holding a compact collection belong to the sequence entry.
+(A deserializer into typed data may hand such a comment to the first entry
+when the outer node has no place for it.)
+
+## Inline Comments
+
+A comment at the end of a line belongs to the node that ends on that line:
+
+* `key: value # c` and `- value # c` — the scalar or flow collection `value`.
+* `key: # c` followed by a nested block collection — that block collection.
+* `"""  # c` closing a triple-quoted string — the string.
+* In a flow collection, a comment after an entry (and its comma, if any) on
+  the same line — that entry.
+
+## Trailing Comments
+
+A block collection with indentation `n` ends at the next content line with
+indentation `k < n`, or at the end of the input (let `k = −1`). The gap between
+the collection's last entry and that line is divided: the collection takes the
+longest leading part of the gap in which every comment line has indentation at
+least `n` and greater than `k`. The rest of the gap is processed by the
+enclosing collection.
+
+A block sequence at the same indentation as its parent mapping's keys
+(implicit indentation) ends at the next mapping entry or at any line with less
+indentation; it takes only comment lines indented more than its `-`
+indicators (as if `k = n`).
+
+Comment lines immediately before the `]` or `}` of a flow collection are that
+collection's trailing comment. Inside a flow collection, every other comment
+before an entry (including a comment after the opening bracket and comments
+between a key and its value) is part of the entry's leading comment, attached
+to the entry's value node. Comment lines after the root node that are not
+claimed by a collection are the root node's trailing comment.
+
+**Example:**
+
+```
+# leading comment of the root mapping
+server:
+  # leading comment of `host`
+  host: localhost # inline comment of `localhost`
+  # trailing comment of the `server` mapping
+# leading comment of `ports`
+ports: # inline comment of the `ports` sequence
+  - 80
+  - 443 # inline comment of `443`
+  # trailing comment of the `ports` sequence
+# trailing comment of the root mapping
+```
+
+# Chapter: Serialization
+
+A serializer MUST produce a document that a conforming parser reads back as
+the same data. In particular, a serializer:
+
+* MUST quote a string that would otherwise be resolved as null, bool, int, or
+  float, or that is not a valid bare string;
+* MUST escape characters outside `c-printable`;
+* MUST use triple-quoted or double-quoted strings for strings containing line
+  breaks;
+* MUST emit block sequences with regular indentation;
+* SHOULD escape characters that are invisible or that render as line breaks
+  (such as `xFEFF`, NEL, `x2028`, and `x2029`).
+
+# Chapter: Limits
+
+A processor MAY limit the nesting depth of collections, the size of a document,
+or the length of a scalar. A processor that imposes such a limit MUST report an
+error when the limit is exceeded. The reference implementation limits nesting
+depth to 128 by default.

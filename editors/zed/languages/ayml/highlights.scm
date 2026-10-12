@@ -8,6 +8,7 @@
 (null_literal) @constant.builtin
 (boolean_literal) @constant.builtin
 (integer_literal) @number
+(float_literal) @number
 
 ; Strings
 (double_quoted_string) @string
@@ -16,7 +17,7 @@
 (flow_bare_string) @string
 
 ; Punctuation
-["," ] @punctuation.delimiter
+"," @punctuation.delimiter
 (sequence_indicator) @punctuation.delimiter
 ["[" "]"] @punctuation.bracket
 ["{" "}"] @punctuation.bracket

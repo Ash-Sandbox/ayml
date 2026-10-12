@@ -1,6 +1,6 @@
-//! Side-by-side AYML vs serde_json benchmarks.
-//!
-//! Run with: cargo bench --bench serde_comparison
+//! AYML vs `serde_json` benchmarks. Command: `cargo bench --bench serde_comparison`
+
+use std::fmt::Write as _;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use serde::{Deserialize, Serialize};
@@ -140,12 +140,13 @@ const STRINGS_JSON: &str = r#"{"title":"The Quick Brown Fox Jumps Over the Lazy 
 fn make_large_ayml() -> String {
     let mut s = String::new();
     for i in 0..50 {
-        s.push_str(&format!(
+        let _ = write!(
+            s,
             "- id: {i}\n  name: user-{i}\n  email: user-{i}@example.com\n  score: {}.{}\n  active: {}\n",
             i * 17 % 100,
             i * 31 % 100,
             i % 2 == 0,
-        ));
+        );
     }
     s
 }
