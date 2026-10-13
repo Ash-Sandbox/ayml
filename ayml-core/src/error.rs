@@ -79,7 +79,7 @@ pub enum ErrorKind {
     DuplicateKey(String),
     /// A byte order mark was found at the start of the input.
     ByteOrderMark,
-    /// A character outside the printable set appeared literally.
+    /// A character outside `c-printable` appeared literally.
     NonPrintable(char),
     /// An integer literal outside the 64-bit signed range.
     IntegerOverflow,
@@ -101,7 +101,7 @@ impl fmt::Display for ErrorKind {
             Self::ByteOrderMark => f.write_str("byte order mark is not allowed"),
             Self::NonPrintable(c) => write!(
                 f,
-                "non-printable character U+{:04X} (use an escape sequence in a quoted string)",
+                "character U+{:04X} may not appear literally (use an escape sequence in a quoted string)",
                 *c as u32
             ),
             Self::IntegerOverflow => {

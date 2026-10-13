@@ -1,6 +1,6 @@
 # AYML version 1.0
 
-**2026-10-12**
+**2026-10-13**
 
 **Status of this Document**
 
@@ -173,7 +173,6 @@ not a number: nan
 **Strings**
 
 There are two kinds of single-line strings: bare and double-quoted.
-For multi-line strings, use triple-quoted strings (`"""`).
 
 ```
 unicode: "Sosa did fine.\u263A"
@@ -182,9 +181,10 @@ hex esc: "\x0d\x0a is \r\n"
 howdy: "\"Howdy!\" he cried."
 ```
 
-Triple-quoted strings (`"""`) are the only multi-line string format. The closing
-`"""` indentation determines whitespace stripping. Escape sequences
-are supported. A `\` at the end of a line suppresses the line break.
+Triple-quoted strings (`"""`) are the only multi-line string format. The
+indentation of the closing `"""` determines how much leading white space is
+stripped. Escape sequences are supported, and a `\` at the end of a line
+suppresses the line break.
 
 ```
 plain: This unquoted scalar is single-line only.
@@ -222,7 +222,7 @@ comments; processors that edit documents (formatters, linters, language
 servers) preserve them. Each comment belongs to exactly one node:
 
 * comment lines above a node belong to that node
-* a comment at the end of a line belongs to the node on that line
+* a comment at the end of a line belongs to the node that ends on that line
 * comment lines after the last entry of a collection belong to that collection
 
 **Example: Top and Side Comments**
@@ -431,19 +431,28 @@ character set.
 
 ```
 c-printable ::=
-    x09                  # Tab (\t)
-  | x0A                  # Line feed (LF \n)
-  | x0D                  # Carriage return (CR \r)
-  | [x20-x7E]            # Printable ASCII
-  | x85                  # Next Line (NEL)
-  | [xA0-xD7FF]          # Basic Multilingual Plane (BMP)
-  | [xE000-xFFFD]        # Additional Unicode Areas
-  | [x010000-x10FFFF]    # Supplementary planes
+    (
+        x09                  # Tab (\t)
+      | x0A                  # Line feed (LF \n)
+      | x0D                  # Carriage return (CR \r)
+      | [x20-x7E]            # Printable ASCII
+      | x85                  # Next Line (NEL)
+      | [xA0-xD7FF]          # Basic Multilingual Plane (BMP)
+      | [xE000-xFFFD]        # Additional Unicode Areas
+      | [x010000-x10FFFF]    # Supplementary planes
+    )
+  - c-bidi-control
+
+c-bidi-control ::=
+    [x202A-x202E]        # Bidirectional embeddings and overrides
+  | [x2066-x2069]        # Bidirectional isolates
 ```
 
 Every character of an AYML document MUST be in `c-printable`. Characters
 outside this set (such as NUL, DEL, and the C1 controls other than NEL) can
-only be represented through escape sequences in quoted strings.
+only be represented through escape sequences in quoted strings. Bidirectional
+control characters are excluded because they can make text display in a
+different order than it is parsed, hiding what a document says.
 
 ## Character Encoding
 
@@ -593,8 +602,9 @@ s-indent(n) ::= s-space{n}
 Tabs MUST NOT be used for indentation: the leading white space of every line
 that is not blank MUST consist of spaces only, as must the white space between
 a block sequence's `-` and its value (which sets the indentation of a compact
-collection). Elsewhere, tabs may be used for separation, and blank lines may
-contain tabs.
+collection). Elsewhere, tabs may be used for separation, blank lines may
+contain tabs, and triple-quoted string content may begin with tabs after its
+indentation.
 
 The entries of a block collection all begin at the same indentation. When a
 nested block collection begins on a new line, its indentation is detected from
@@ -804,9 +814,9 @@ c-triple-quoted(n) ::=
 The rules for a triple-quoted string are:
 
 * The opening `"""` MUST be followed by optional white space and a line break.
-* The closing delimiter is the first subsequent line whose first non-space
-  characters are `"""`. A content line that must begin with `"""` escapes a
-  quote (`\"""`).
+* The closing delimiter is the first subsequent line whose first non-white-space
+  characters are `"""`. Its indentation MUST consist of spaces. A content line
+  that must begin with `"""` escapes a quote (`\"""`).
 * The closing indentation `m` MUST be at least the indentation `n` of the block
   entry that contains the string (zero at the top level).
 * Every content line MUST begin with `m` spaces, which are removed. A line that
@@ -914,10 +924,8 @@ The indentation of a compact collection is the column at which its first entry
 begins. Its remaining entries begin at that same indentation on subsequent
 lines.
 
-An AYML deserializer MUST accept a block sequence whose entries are at the same
-indentation as their parent mapping key ("implicit indentation"). An AYML
-serializer MUST produce block sequences with regular indentation (nested two
-spaces deeper than the parent key) and exactly one space after each `-`.
+The entries of a block sequence that is a mapping value may be at the same
+indentation as the mapping's keys ("implicit indentation").
 
 ```
 l-block-sequence(n) ::=
@@ -1002,14 +1010,15 @@ mapping is a comma-separated list of key/value pairs within curly braces `{}`.
 Trailing commas are allowed. Flow collections may span multiple lines and may
 contain comments.
 
-Indentation is not significant inside flow collections, but every line after
-the first MUST be indented at least `n` spaces, where `n` is the indentation of
-the block entry containing the flow collection (zero at the top level).
+Indentation is not significant inside flow collections, but every non-blank
+line after the first MUST be indented with at least `n` spaces, where `n` is
+the indentation of the block entry containing the flow collection (zero at the
+top level).
 
 ```
 s-flow-sep(n) ::=
     s-white
-  | b-break s-indent(m)                  # m >= n, spaces only
+  | b-break l-blank* s-indent(m) [ lookahead ≠ s-white ]    # m >= n
   | s-separate-in-line c-nb-comment-text
   | <start-of-line> c-nb-comment-text    # after the indentation of a line
 
@@ -1084,7 +1093,8 @@ ns-l-block-node(n) ::=
 
 An AYML file contains exactly one document. A document is a single root node
 starting at column zero, surrounded by optional blank lines and comment lines.
-A document with no root node is an error.
+A document with no root node is an error. There are no document markers: a
+first line of `---` is a bare string.
 
 ```
 l-ayml-document ::=
@@ -1124,12 +1134,15 @@ The comment lines between the previous entry (or the start of the document or
 collection) and an entry belong to that entry's node. For a mapping entry, the
 leading comment is attached to the entry's value node.
 
-When several nodes begin on the same line, comment lines before that line
-belong to the outermost of them: comment lines before a root block collection
-belong to the root node, not its first entry, and comment lines before a
-sequence entry holding a compact collection belong to the sequence entry.
-(A deserializer into typed data may hand such a comment to the first entry
-when the outer node has no place for it.)
+A root block collection, or a compact collection in a sequence entry, begins
+on the line of its first entry and takes the comment lines before that line:
+comment lines before a root block collection belong to the root node, not its
+first entry, and comment lines before a sequence entry holding a compact
+collection belong to the sequence entry. (A deserializer into typed data may
+hand such a comment to the first entry when the outer node has no place for
+it.) A block collection that is a mapping value begins on the line after its
+key, so comment lines between the key and the first entry belong to that
+entry.
 
 ## Inline Comments
 
@@ -1188,7 +1201,8 @@ the same data. In particular, a serializer:
 * MUST escape characters outside `c-printable`;
 * MUST use triple-quoted or double-quoted strings for strings containing line
   breaks;
-* MUST emit block sequences with regular indentation;
+* MUST emit exactly one space after each block sequence `-`, and MUST nest a
+  block sequence that is a mapping value two spaces deeper than its key;
 * SHOULD escape characters that are invisible or that render as line breaks
   (such as `xFEFF`, NEL, `x2028`, and `x2029`).
 

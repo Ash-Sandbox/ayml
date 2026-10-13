@@ -68,6 +68,8 @@ fn messages_explain_common_mistakes() {
         ("{a:1}", "must be followed by a space"),
         ("\"a\nb\"", "use a triple-quoted string for multiple lines"),
         ("k: \"\"\"x\n\"\"\"", "must start on the line after"),
+        ("---\na: 1", "AYML has no document markers"),
+        ("--- # c\na: 1", "AYML has no document markers"),
     ];
     for (input, hint) in cases {
         let message = err(input).to_string();
@@ -100,6 +102,8 @@ fn non_printable_characters_are_rejected_everywhere() {
         ("a\u{C}b: 1", '\u{C}'),
         ("a: \"\"\"\n  \u{80}\n  \"\"\"", '\u{80}'),
         ("a: \u{FFFE}", '\u{FFFE}'),
+        ("a: \"x\u{202E}y\"", '\u{202E}'),
+        ("a: 1 # \u{2066}", '\u{2066}'),
     ] {
         assert_eq!(err(input).kind, ErrorKind::NonPrintable(ch), "{input:?}");
     }
@@ -119,6 +123,8 @@ fn tabs_in_indentation() {
         "\ta: 1",
         "- a\n\t- b",
         "a: 1\n \t# c",
+        "a: \"\"\"\n  x\n\t\"\"\"",
+        "a: \"\"\"\n  x\n \t \"\"\"",
     ] {
         assert_eq!(err(input).kind, ErrorKind::TabIndent, "{input:?}");
     }

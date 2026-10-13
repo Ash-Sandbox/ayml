@@ -532,7 +532,7 @@ fn triple_quoted_content_must_start_on_next_line() {
     assert_syntax("k: \"\"\"text\n  \"\"\"", "must start on the line after");
     assert_syntax(
         "k: \"\"\" # c\n  x\n  \"\"\"",
-        "must start on the line after",
+        "a comment cannot follow an opening",
     );
 }
 

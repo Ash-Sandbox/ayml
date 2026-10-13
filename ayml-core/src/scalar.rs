@@ -19,7 +19,13 @@ pub const fn is_printable(ch: char) -> bool {
         | 0xA0..=0xD7FF
         | 0xE000..=0xFFFD
         | 0x1_0000..=0x10_FFFF
-    )
+    ) && !is_bidi_control(ch)
+}
+
+/// `c-bidi-control`: embedding, override, and isolate characters, which can
+/// make text display in a different order than it is parsed.
+const fn is_bidi_control(ch: char) -> bool {
+    matches!(ch, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 /// `c-indicator`.

@@ -281,8 +281,8 @@ fn flow_sequences() {
     let node = ok("[name, hr, avg]");
     let v: Vec<_> = items(&node).iter().map(|n| n.value.clone()).collect();
     assert_eq!(v, vec![s("name"), s("hr"), s("avg")]);
-    assert!(items(&ok("[]")).is_empty());
-    assert!(items(&ok("[ ]")).is_empty());
+    assert_eq!(items(&ok("[]")), []);
+    assert_eq!(items(&ok("[ ]")), []);
     assert_eq!(items(&ok("[1, 2,]")).len(), 2);
     assert_eq!(
         items(&ok("[Mark McGwire, 65, 0.278]"))[0].value,
@@ -302,7 +302,7 @@ fn nested_flow_collections() {
 fn flow_mappings() {
     let node = ok("{hr: 65, avg: 0.278}");
     assert_eq!(keys(&node), vec!["hr", "avg"]);
-    assert!(keys(&ok("{}")).is_empty());
+    assert_eq!(keys(&ok("{}")), Vec::<&str>::new());
     assert_eq!(keys(&ok("{a: 1,}")), vec!["a"]);
 }
 

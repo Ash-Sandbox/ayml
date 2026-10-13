@@ -118,6 +118,7 @@ fn control_and_confusable_characters_are_escaped() {
     golden(&st("\u{feff}a"), "\"\\uFEFFa\"\n");
     golden(&st("a\u{2028}b"), "\"a\\u2028b\"\n");
     golden(&st("\u{fffe}"), "\"\\uFFFE\"\n");
+    golden(&st("a\u{202E}b"), "\"a\\u202Eb\"\n");
     golden(&st("\x07\x08\x0b\x0c\x1b\r"), "\"\\a\\b\\v\\f\\e\\r\"\n");
 }
 

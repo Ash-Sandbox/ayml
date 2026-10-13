@@ -560,10 +560,13 @@ impl<'a> Reader<'a> {
     fn document_end(&mut self) -> Result<Event<'a>> {
         let (next, _) = self.scan_gap(self.pos)?;
         if let Some(next) = next {
-            return Err(self.syntax(
-                "unexpected content after the root value (a document contains exactly one root node)",
-                next.content,
-            ));
+            let message = if self.starts_with_document_marker() {
+                "unexpected content after the root value (AYML has no document markers, \
+                 so the first line was read as a string)"
+            } else {
+                "unexpected content after the root value (a document contains exactly one root node)"
+            };
+            return Err(self.syntax(message, next.content));
         }
         self.next = Next::Done;
         Ok(Event::DocumentEnd {
@@ -571,12 +574,25 @@ impl<'a> Reader<'a> {
         })
     }
 
+    /// True if the first content line is a YAML document marker: `---` or
+    /// `...`, alone or followed by white space.
+    fn starts_with_document_marker(&mut self) -> bool {
+        let Ok((Some(first), _)) = self.scan_gap(0) else {
+            return false;
+        };
+        let rest = &self.src[first.content..];
+        (rest.starts_with("---") || rest.starts_with("..."))
+            && !self.is_plain_safe_at(first.content + 3)
+    }
+
+    fn is_plain_safe_at(&self, at: usize) -> bool {
+        self.char_at(at)
+            .is_some_and(|c| scalar::is_plain_safe(c, Context::Block))
+    }
+
     /// True if the content at `at` is a block sequence entry indicator.
     fn is_seq_entry(&self, at: usize) -> bool {
-        self.b.get(at) == Some(&b'-')
-            && !self
-                .char_at(at + 1)
-                .is_some_and(|c| scalar::is_plain_safe(c, Context::Block))
+        self.b.get(at) == Some(&b'-') && !self.is_plain_safe_at(at + 1)
     }
 
     /// Read a block node whose first character is at column `col` of the current line.
@@ -993,6 +1009,13 @@ impl<'a> Reader<'a> {
         if i == b.len() {
             return Err(self.eof("in triple-quoted string", at));
         }
+        if b[i] == b'#' {
+            return Err(self.syntax(
+                "a comment cannot follow an opening `\"\"\"`; \
+                 put it above the entry or after the closing `\"\"\"`",
+                i,
+            ));
+        }
         if !self.is_break_or_eof(i) {
             return Err(self.syntax(
                 "the content of a triple-quoted string must start on the line after the opening `\"\"\"`",
@@ -1012,6 +1035,15 @@ impl<'a> Reader<'a> {
             }
             if self.src[s..].starts_with("\"\"\"") {
                 break (i, s - i);
+            }
+            if b.get(s) == Some(&b'\t') {
+                let mut t = s;
+                while matches!(b.get(t), Some(b' ' | b'\t')) {
+                    t += 1;
+                }
+                if self.src[t..].starts_with("\"\"\"") {
+                    return Err(self.error(ErrorKind::TabIndent, s, s + 1));
+                }
             }
             let eol = self.eol(i);
             lines.push((i, eol));
