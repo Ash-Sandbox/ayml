@@ -386,51 +386,43 @@ pub const fn is_confusable(ch: char) -> bool {
 /// confusable characters, which an emitter should make visible by quoting.
 #[must_use]
 pub fn is_bare_key(s: &str, ctx: Context) -> bool {
-    let b = s.as_bytes();
     let mask = match ctx {
         Context::Block => PLAIN_SAFE_BLOCK,
         Context::Flow => PLAIN_SAFE_FLOW,
     };
-    let safe = |c: u8| c < 0x80 && PLAIN_CLASS[c as usize] & mask != 0;
+    let safe = |c: &u8| PLAIN_CLASS[*c as usize] & mask != 0;
+    let b = s.as_bytes();
     let (Some(&first), Some(&last)) = (b.first(), b.last()) else {
         return false;
     };
-    if first >= 0x80 || last >= 0x80 {
-        return is_bare_unicode(s, ctx);
-    }
     let first_ok = match first {
-        b'-' | b':' => b.get(1).is_some_and(|&n| n >= 0x80 || safe(n)),
-        c => safe(c) && !is_indicator(c as char) && c != b'\'',
+        b'-' | b':' => b.get(1).is_some_and(safe),
+        c => safe(&c) && !is_indicator(c as char) && c != b'\'',
     };
     if !first_ok || last == b' ' {
         return false;
     }
-    let mut i = 1;
-    while i < b.len() {
-        // Runs of plain characters other than `:` and space.
-        while i < b.len() && b[i] != b':' && PLAIN_CLASS[b[i] as usize] & mask != 0 && b[i] < 0x80 {
-            i += 1;
-        }
-        if i == b.len() {
-            break;
-        }
-        match b[i] {
-            b' ' => {}
-            b':' => {
-                if !b.get(i + 1).is_some_and(|&n| n >= 0x80 || safe(n)) {
-                    return false;
-                }
-            }
-            c if c >= 0x80 => return is_bare_unicode(s, ctx),
+    let mut ascii = true;
+    for (i, c) in b.iter().enumerate() {
+        let ok = match c {
+            b' ' => true,
+            b':' => b.get(i + 1).is_some_and(safe),
             c => {
-                if !safe(c) {
-                    return false;
-                }
+                ascii &= c.is_ascii();
+                safe(c)
             }
+        };
+        if !ok {
+            return false;
         }
-        i += 1;
     }
-    true
+    // Non-ASCII bytes pass as plain-safe above.
+    ascii || {
+        let visible = |c: Option<char>| c.is_some_and(|c| !c.is_whitespace());
+        visible(s.chars().next())
+            && visible(s.chars().next_back())
+            && s.chars().all(|c| is_printable(c) && !is_confusable(c))
+    }
 }
 
 /// True if `s` can be written as a bare scalar in value position in context
@@ -438,15 +430,4 @@ pub fn is_bare_key(s: &str, ctx: Context) -> bool {
 #[must_use]
 pub fn is_bare_value(s: &str, ctx: Context) -> bool {
     is_bare_key(s, ctx) && matches!(resolve(s), Ok(Scalar::Str(_)))
-}
-
-/// [`is_bare_key`] for strings with non-ASCII characters, which
-/// [`scan_bare`] does not inspect.
-fn is_bare_unicode(s: &str, ctx: Context) -> bool {
-    let visible_ends = |c: Option<char>| c.is_some_and(|c| !c.is_whitespace());
-    visible_ends(s.chars().next())
-        && visible_ends(s.chars().next_back())
-        && !s.contains(['\t', '\n', '\r'])
-        && s.chars().all(|c| is_printable(c) && !is_confusable(c))
-        && scan_bare(s, 0, ctx) == Some(s.len())
 }

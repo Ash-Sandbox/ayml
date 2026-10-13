@@ -42,33 +42,21 @@ pub fn to_node<T: ?Sized + Serialize>(value: &T) -> Result<Node> {
 
 /// Receives the values of a document in order, like [`Writer`].
 trait Sink {
-    fn key(&mut self, key: &str);
-    fn static_key(&mut self, key: &'static str) {
-        self.key(key);
-    }
-    fn scalar(&mut self, value: Scalar<'_>, comments: Comments<'_>);
-    fn begin(&mut self, is_map: bool, comments: Comments<'_>);
+    fn scalar(&mut self, key: Option<&str>, value: Scalar<'_>, comments: Comments<'_>);
+    fn begin(&mut self, key: Option<&str>, is_map: bool, comments: Comments<'_>);
     fn end(&mut self);
 }
 
 impl Sink for Writer {
-    fn key(&mut self, key: &str) {
-        Self::key(self, key);
+    fn scalar(&mut self, key: Option<&str>, value: Scalar<'_>, comments: Comments<'_>) {
+        Self::scalar(self, key, value, comments);
     }
 
-    fn static_key(&mut self, key: &'static str) {
-        Self::static_key(self, key);
-    }
-
-    fn scalar(&mut self, value: Scalar<'_>, comments: Comments<'_>) {
-        Self::scalar(self, value, comments);
-    }
-
-    fn begin(&mut self, is_map: bool, comments: Comments<'_>) {
+    fn begin(&mut self, key: Option<&str>, is_map: bool, comments: Comments<'_>) {
         if is_map {
-            self.begin_map(comments);
+            self.begin_map(key, comments);
         } else {
-            self.begin_seq(comments);
+            self.begin_seq(key, comments);
         }
     }
 
@@ -81,7 +69,6 @@ impl Sink for Writer {
 #[derive(Default)]
 struct TreeBuilder {
     stack: Vec<(Node, Option<Key>)>,
-    key: Option<Key>,
     root: Option<Node>,
 }
 
@@ -117,23 +104,17 @@ fn node(value: Value, comments: Comments<'_>) -> Node {
 }
 
 impl Sink for TreeBuilder {
-    fn key(&mut self, key: &str) {
-        self.key = Some(Key::new(key));
+    fn scalar(&mut self, key: Option<&str>, value: Scalar<'_>, comments: Comments<'_>) {
+        self.add(node(Value::from(value), comments), key.map(Key::new));
     }
 
-    fn scalar(&mut self, value: Scalar<'_>, comments: Comments<'_>) {
-        let key = self.key.take();
-        self.add(node(Value::from(value), comments), key);
-    }
-
-    fn begin(&mut self, is_map: bool, comments: Comments<'_>) {
+    fn begin(&mut self, key: Option<&str>, is_map: bool, comments: Comments<'_>) {
         let value = if is_map {
             Value::Map(Mapping::new())
         } else {
             Value::Seq(Vec::new())
         };
-        let key = self.key.take();
-        self.stack.push((node(value, comments), key));
+        self.stack.push((node(value, comments), key.map(Key::new)));
     }
 
     fn end(&mut self) {
@@ -163,6 +144,8 @@ fn int_out_of_range(v: impl std::fmt::Display) -> Error {
 
 struct Serializer<S> {
     sink: S,
+    /// The key of the next value, in a mapping.
+    key: Option<Cow<'static, str>>,
     comments: Option<commented::Comments>,
     key_sets: Vec<HashSet<String>>,
 }
@@ -171,26 +154,28 @@ impl<S: Sink> Serializer<S> {
     const fn new(sink: S) -> Self {
         Self {
             sink,
+            key: None,
             comments: None,
             key_sets: Vec::new(),
         }
     }
 
     fn scalar(&mut self, value: Scalar<'_>) {
+        let key = self.key.take();
         let comments = self.comments.take().unwrap_or_default();
-        self.sink.scalar(value, comments.borrow());
+        self.sink.scalar(key.as_deref(), value, comments.borrow());
     }
 
     fn begin(&mut self, is_map: bool) {
+        let key = self.key.take();
         let comments = self.comments.take().unwrap_or_default();
-        self.sink.begin(is_map, comments.borrow());
+        self.sink.begin(key.as_deref(), is_map, comments.borrow());
     }
 
     /// Start a single-entry mapping holding a tuple or struct variant.
     fn begin_variant(&mut self, variant: &'static str, is_map: bool) {
         self.begin(true);
-        self.sink.static_key(variant);
-        self.sink.begin(is_map, Comments::default());
+        self.sink.begin(Some(variant), is_map, Comments::default());
     }
 }
 
@@ -279,7 +264,7 @@ impl<'a, S: Sink> ser::Serializer for &'a mut Serializer<S> {
         self.begin(false);
         for b in v {
             self.sink
-                .scalar(Scalar::Int(i64::from(*b)), Comments::default());
+                .scalar(None, Scalar::Int(i64::from(*b)), Comments::default());
         }
         self.sink.end();
         Ok(())
@@ -336,7 +321,7 @@ impl<'a, S: Sink> ser::Serializer for &'a mut Serializer<S> {
         value: &T,
     ) -> Result<()> {
         self.begin(true);
-        self.sink.static_key(variant);
+        self.key = Some(Cow::Borrowed(variant));
         value.serialize(&mut *self)?;
         self.sink.end();
         Ok(())
@@ -415,7 +400,7 @@ impl<'a, S: Sink> Compound<'a, S> {
     }
 
     fn field<T: ?Sized + Serialize>(&mut self, key: &'static str, value: &T) -> Result<()> {
-        self.ser.sink.static_key(key);
+        self.ser.key = Some(Cow::Borrowed(key));
         value.serialize(&mut *self.ser)
     }
 
@@ -494,11 +479,10 @@ impl<S: Sink> ser::SerializeMap for Compound<'_, S> {
     fn serialize_key<T: ?Sized + Serialize>(&mut self, key: &T) -> Result<()> {
         let key = key.serialize(KeySerializer)?;
         let keys = self.ser.key_sets.last_mut().expect("map key set");
-        if keys.contains(&key) {
+        if !keys.insert(key.clone()) {
             return Err(Error::data(format!("duplicate mapping key `{key}`")));
         }
-        self.ser.sink.key(&key);
-        keys.insert(key);
+        self.ser.key = Some(Cow::Owned(key));
         Ok(())
     }
 

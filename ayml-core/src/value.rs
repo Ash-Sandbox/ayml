@@ -7,6 +7,8 @@ use crate::error::Span;
 use crate::scalar::Scalar;
 
 /// A node in the AYML document tree.
+///
+/// Equality compares values and comments, not spans.
 #[derive(Debug, Clone, Default)]
 pub struct Node {
     /// The value of this node.
@@ -146,7 +148,7 @@ pub type Mapping = IndexMap<Key, Node>;
 /// An AYML value.
 ///
 /// Equality treats two NaN floats as equal, so that structural comparison of
-/// documents is reflexive.
+/// documents is reflexive, and compares mapping entries in order.
 #[derive(Debug, Clone, Default)]
 pub enum Value {
     #[default]

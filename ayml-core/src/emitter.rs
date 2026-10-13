@@ -1,17 +1,20 @@
 //! Canonical AYML emitter.
 //!
 //! [`Writer`] writes a document from a stream of values without needing a
-//!  tree. [`emit`] writes a [`Node`] tree. Output is block style for every
-//! non-empty collection, with two-space indentation. For every node tree,
-//! `parse(emit(node))` normalizes the following:
+//! tree. [`emit`] writes a [`Node`] tree. Output is block style for every
+//! non-empty collection, with two-space indentation.
 //!
-//! * Comment lines are trimmed of trailing white space.
-//! * Line breaks inside inline comments become spaces.
-//! * Characters that are invalid in a comment are replaced with U+FFFD.
-//! * An inline comment in the root collection is turned into a leading comment.
-//! * An inline comment on the first element of a sequence becomes a leading comment.
-//! * The trailing comment of an empty root collection is written after its brackets.
-//! * The trailing comment of a scalar is written after its entry.
+//! Comments are written where the parser reads them back, except where AYML
+//! has no place for them. `parse(emit(node))` normalizes comments as follows:
+//!
+//! * Comment lines are trimmed of trailing white space, line breaks inside
+//!   inline comments become spaces, and characters that may not appear in a
+//!   comment become U+FFFD.
+//! * A non-empty collection at the root or in a sequence begins on the line of
+//!   its first entry, so its inline comment and its first entry's leading
+//!   comment join its leading comment.
+//! * A scalar's trailing comment joins the next entry's leading comment, or
+//!   the enclosing collection's trailing comment after the last entry.
 
 use std::fmt::Write as _;
 
@@ -22,11 +25,11 @@ use crate::value::{Node, Value};
 #[must_use]
 pub fn emit(node: &Node) -> String {
     let mut w = Writer::new();
-    write_node(&mut w, node);
+    write_node(&mut w, None, node);
     w.finish()
 }
 
-fn write_node(w: &mut Writer, node: &Node) {
+fn write_node(w: &mut Writer, key: Option<&str>, node: &Node) {
     let comments = Comments {
         comment: node.comment.as_deref(),
         inline: node.inline_comment.as_deref(),
@@ -34,21 +37,20 @@ fn write_node(w: &mut Writer, node: &Node) {
     };
     match &node.value {
         Value::Seq(items) => {
-            w.begin_seq(comments);
+            w.begin_seq(key, comments);
             for item in items {
-                write_node(w, item);
+                write_node(w, None, item);
             }
             w.end();
         }
         Value::Map(map) => {
-            w.begin_map(comments);
+            w.begin_map(key, comments);
             for (key, value) in map {
-                w.key(&key.name);
-                write_node(w, value);
+                write_node(w, Some(&key.name), value);
             }
             w.end();
         }
-        scalar => w.scalar(scalar.as_scalar().expect("scalar value"), comments),
+        scalar => w.scalar(key, scalar.as_scalar().expect("scalar value"), comments),
     }
 }
 
@@ -87,9 +89,12 @@ struct Frame {
 
 /// Streaming AYML writer.
 ///
+/// Each value is written with its key, which must be `Some` for a mapping
+/// value and `None` otherwise.
+///
 /// # Panics
-/// Calls in an invalid order (a value in a mapping without a key, an `end`
-/// without a collection, `finish` with open collections) panic.
+/// Invalid calls (a key that does not match the enclosing collection, an
+/// `end` without a collection, `finish` with open collections) panic.
 pub struct Writer {
     out: String,
     stack: Vec<Frame>,
@@ -98,9 +103,6 @@ pub struct Writer {
     pending_indent: usize,
     pending_dashes: usize,
     after_colon: bool,
-    key: String,
-    static_key: Option<&'static str>,
-    has_key: bool,
 }
 
 impl Default for Writer {
@@ -120,9 +122,6 @@ impl Writer {
             pending_indent: 0,
             pending_dashes: 0,
             after_colon: false,
-            key: String::new(),
-            static_key: None,
-            has_key: false,
         }
     }
 
@@ -136,31 +135,9 @@ impl Writer {
         self.out
     }
 
-    /// Set the key of the next mapping value.
-    pub fn key(&mut self, key: &str) {
-        self.static_key = None;
-        self.key.clear();
-        if scalar::is_bare_key(key, Context::Block) {
-            self.key.push_str(key);
-        } else {
-            write_double_quoted(&mut self.key, key);
-        }
-        self.has_key = true;
-    }
-
-    /// Set the key of the next mapping value.
-    pub fn static_key(&mut self, key: &'static str) {
-        if scalar::is_bare_key(key, Context::Block) {
-            self.static_key = Some(key);
-            self.has_key = true;
-        } else {
-            self.key(key);
-        }
-    }
-
     /// Write a scalar.
-    pub fn scalar(&mut self, value: Scalar<'_>, comments: Comments<'_>) {
-        let n = self.begin_entry(comments.comment);
+    pub fn scalar(&mut self, key: Option<&str>, value: Scalar<'_>, comments: Comments<'_>) {
+        let n = self.begin_entry(key, comments.comment);
         self.flush_pending();
         if std::mem::take(&mut self.after_colon) {
             self.out.push(' ');
@@ -176,13 +153,13 @@ impl Writer {
     }
 
     /// Start a sequence.
-    pub fn begin_seq(&mut self, comments: Comments<'_>) {
-        self.begin_collection(false, comments);
+    pub fn begin_seq(&mut self, key: Option<&str>, comments: Comments<'_>) {
+        self.begin_collection(key, false, comments);
     }
 
     /// Start a mapping.
-    pub fn begin_map(&mut self, comments: Comments<'_>) {
-        self.begin_collection(true, comments);
+    pub fn begin_map(&mut self, key: Option<&str>, comments: Comments<'_>) {
+        self.begin_collection(key, true, comments);
     }
 
     /// End the innermost collection.
@@ -220,8 +197,8 @@ impl Writer {
         self.out.push('\n');
     }
 
-    fn begin_collection(&mut self, is_map: bool, comments: Comments<'_>) {
-        let n = self.begin_entry(comments.comment);
+    fn begin_collection(&mut self, key: Option<&str>, is_map: bool, comments: Comments<'_>) {
+        let n = self.begin_entry(key, comments.comment);
         let position = match self.stack.last() {
             None => Position::Root,
             Some(f) if f.is_map => Position::MapValue,
@@ -241,12 +218,18 @@ impl Writer {
 
     /// Start a new entry in the innermost collection (or the root value) and
     /// make the pending line its first line. Returns entry indentation.
-    fn begin_entry(&mut self, comment: Option<&str>) -> usize {
+    fn begin_entry(&mut self, key: Option<&str>, comment: Option<&str>) -> usize {
         let leading = if comment.is_some() {
             comment_lines(comment)
         } else {
             Vec::new()
         };
+        let is_map = self.stack.last().is_some_and(|top| top.is_map);
+        assert_eq!(
+            key.is_some(),
+            is_map,
+            "a value needs a key exactly when it is in a mapping"
+        );
         let Some(top) = self.stack.last_mut() else {
             self.pending = true;
             self.pending_indent = 0;
@@ -255,8 +238,6 @@ impl Writer {
             return 0;
         };
         let n = top.indent;
-        let is_map = top.is_map;
-        assert!(!is_map || self.has_key, "mapping value without a key");
         if !top.opened {
             top.opened = true;
             let inline = top.inline.take();
@@ -270,19 +251,19 @@ impl Writer {
                         .extend(comment_lines(inline.as_deref()));
                 }
                 self.pending_comments.extend(leading);
-                if is_map {
+                if let Some(key) = key {
                     self.flush_pending();
-                    self.write_key();
+                    self.write_key(key);
                 } else {
                     self.pending_dashes += 1;
                 }
                 return n;
             }
         }
-        if is_map {
+        if let Some(key) = key {
             self.comment_block(&leading, n);
             self.indent(n);
-            self.write_key();
+            self.write_key(key);
         } else {
             self.pending = true;
             self.pending_indent = n;
@@ -292,13 +273,13 @@ impl Writer {
         n
     }
 
-    fn write_key(&mut self) {
-        match self.static_key.take() {
-            Some(key) => self.out.push_str(key),
-            None => self.out.push_str(&self.key),
+    fn write_key(&mut self, key: &str) {
+        if scalar::is_bare_key(key, Context::Block) {
+            self.out.push_str(key);
+        } else {
+            write_double_quoted(&mut self.out, key);
         }
         self.out.push(':');
-        self.has_key = false;
         self.after_colon = true;
     }
 
