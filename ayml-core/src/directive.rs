@@ -1,17 +1,10 @@
-use crate::value::{Node, Value};
+use crate::value::Node;
 
-/// Find a document's schema directive.
+/// Find a document's schema directive in the comment lines before its root
+/// node.
 #[must_use]
 pub fn document_schema_uri(root: &Node) -> Option<&str> {
-    let first_entry = match &root.value {
-        Value::Seq(items) => items.first(),
-        Value::Map(map) => map.first().map(|(_, v)| v),
-        _ => None,
-    };
-    root.comment
-        .as_deref()
-        .or_else(|| first_entry.and_then(|e| e.comment.as_deref()))
-        .and_then(schema_uri)
+    root.comment.as_deref().and_then(schema_uri)
 }
 
 /// Extract a JSON Schema URI from a comment.
@@ -23,15 +16,11 @@ pub fn document_schema_uri(root: &Node) -> Option<&str> {
 /// # language-server: $schema=<uri>
 /// ```
 ///
-/// The comment text passed here should already have the `# ` prefix stripped
-/// (as stored in [`Node::comment`](crate::Node::comment)).
-///
-/// Returns `None` if no schema directive is found.
+/// `comment` is comment text as stored in [`Node::comment`], without `#`.
 #[must_use]
 pub fn schema_uri(comment: &str) -> Option<&str> {
     for line in comment.lines() {
         let trimmed = line.trim();
-        // Try both recognized prefixes.
         let rest = trimmed
             .strip_prefix("yaml-language-server:")
             .or_else(|| trimmed.strip_prefix("language-server:"));
@@ -81,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    fn document_directive_on_first_entry() {
+    fn document_directive_precedes_the_root() {
         let root = crate::parse("# yaml-language-server: $schema=s.json\na: 1\n").unwrap();
         assert_eq!(document_schema_uri(&root), Some("s.json"));
         let root = crate::parse("# language-server: $schema=t.json\n[1]\n").unwrap();

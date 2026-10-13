@@ -152,8 +152,9 @@ impl SchemaCache {
     }
 
     fn fetch(&self, url: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-        let text = if let Some(path) = url.strip_prefix("file://") {
-            std::fs::read_to_string(path)?
+        let text = if url.starts_with("file:") {
+            let uri: Uri = url.parse()?;
+            std::fs::read_to_string(&*uri.path().as_estr().decode().into_string()?)?
         } else if url.starts_with("https://") || url.starts_with("http://") {
             self.agent.get(url).call()?.body_mut().read_to_string()?
         } else {
@@ -243,10 +244,10 @@ fn collect_leaf_errors(
             if all_same_path {
                 // All variants failed at this same path — describe what's expected.
                 let path = &error_path;
-                let range = resolve_instance_path(node, path).map_or(
-                    Range::new(Position::new(0, 0), Position::new(0, 0)),
-                    |span| span_to_range(text, span),
-                );
+                let range = locate::node_at_pointer(node, path)
+                    .map_or(Range::new(Position::new(0, 0), Position::new(0, 0)), |n| {
+                        span_to_range(text, n.span)
+                    });
 
                 // Try to build a helpful message from the schema.
                 let path_segments: Vec<&str> = if path.is_empty() {
@@ -310,10 +311,10 @@ fn collect_leaf_errors(
 
     // Leaf error — emit a diagnostic.
     let path = error.instance_path().to_string();
-    let range = resolve_instance_path(node, &path).map_or(
-        Range::new(Position::new(0, 0), Position::new(0, 0)),
-        |span| span_to_range(text, span),
-    );
+    let range = locate::node_at_pointer(node, &path)
+        .map_or(Range::new(Position::new(0, 0), Position::new(0, 0)), |n| {
+            span_to_range(text, n.span)
+        });
     let message = if path.is_empty() {
         format!("{error}")
     } else {
@@ -326,34 +327,6 @@ fn collect_leaf_errors(
         message,
         ..Default::default()
     });
-}
-
-/// Walk a JSON pointer path (e.g. "/servers/0/port") through the Node tree
-/// and return the span of the target node.
-fn resolve_instance_path(node: &Node, path: &str) -> Option<Span> {
-    if path.is_empty() {
-        return Some(node.span);
-    }
-
-    let mut current = node;
-    for segment in path.strip_prefix('/')?.split('/') {
-        current = child(current, &unescape_pointer_segment(segment))?;
-    }
-    Some(current.span)
-}
-
-/// Decode a JSON pointer segment (RFC 6901): `~1` is `/` and `~0` is `~`.
-fn unescape_pointer_segment(segment: &str) -> String {
-    segment.replace("~1", "/").replace("~0", "~")
-}
-
-/// The child of a mapping (by key) or sequence (by index).
-fn child<'a>(node: &'a Node, segment: &str) -> Option<&'a Node> {
-    match &node.value {
-        Value::Map(map) => map.get(segment),
-        Value::Seq(items) => items.get(segment.parse::<usize>().ok()?),
-        _ => None,
-    }
 }
 
 /// Convert a byte-offset Span to an LSP Range using the source text.
@@ -477,12 +450,12 @@ fn compute_hover_range(root: &Node, path: &[String], text: &str) -> Option<Range
     };
     let mut parent = root;
     for segment in parents {
-        parent = child(parent, segment)?;
+        parent = locate::child(parent, segment)?;
     }
 
     let map = match &parent.value {
         Value::Map(map) => map,
-        Value::Seq(_) => return Some(span_to_range(text, child(parent, last)?.span)),
+        Value::Seq(_) => return Some(span_to_range(text, locate::child(parent, last)?.span)),
         _ => return None,
     };
     let (key, value) = map.get_key_value(last.as_str())?;
@@ -838,14 +811,6 @@ mod tests {
         assert_eq!(range_text(input, range), "a:b-c: 1");
     }
 
-    #[test]
-    fn pointer_segments_are_unescaped() {
-        let input = "a/b:\n  c~d: 1";
-        let node = ayml_core::parse(input).unwrap();
-        let span = resolve_instance_path(&node, "/a~1b/c~0d").unwrap();
-        assert_eq!(&input[span.start..span.end], "1");
-    }
-
     // ── comments ────────────────────────────────────────────────
 
     #[test]
@@ -862,6 +827,20 @@ mod tests {
         let hash = input.find('#').unwrap();
         assert!(comment_at(input, hash + 2));
         assert!(!comment_at(input, input.find('2').unwrap()));
+    }
+
+    // ── schema loading ──────────────────────────────────────────
+
+    #[test]
+    fn file_schema_urls_are_percent_decoded() {
+        let dir = std::env::temp_dir().join("ayml lsp test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("schema.json");
+        std::fs::write(&path, r#"{"type": "object"}"#).unwrap();
+        let url = format!("file://{}", path.display()).replace(' ', "%20");
+        let mut schemas = SchemaCache::new();
+        assert!(schemas.get(&url).is_ok(), "{:?}", schemas.get(&url).err());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     // ── UTF-16 positions ────────────────────────────────────────

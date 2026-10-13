@@ -92,30 +92,21 @@ fn step_into<'a>(schema: &'a Json, segment: &str) -> Option<&'a Json> {
     None
 }
 
-/// Resolve `$ref` pointers (local JSON pointer refs only).
-fn resolve_refs<'a>(root: &'a Json, schema: &'a Json) -> &'a Json {
-    if let Some(ref_str) = schema.get("$ref").and_then(|r| r.as_str())
-        && let Some(pointer) = ref_str.strip_prefix('#')
-        && let Some(resolved) = pointer_lookup(root, pointer)
-    {
-        return resolved;
+/// Resolve local `$ref` pointers, following chains of references.
+fn resolve_refs<'a>(root: &'a Json, mut schema: &'a Json) -> &'a Json {
+    const MAX_CHAIN: usize = 32;
+    for _ in 0..MAX_CHAIN {
+        let target = schema
+            .get("$ref")
+            .and_then(Json::as_str)
+            .and_then(|r| r.strip_prefix('#'))
+            .and_then(|pointer| root.pointer(pointer));
+        match target {
+            Some(target) => schema = target,
+            None => break,
+        }
     }
     schema
-}
-
-/// Look up a JSON pointer (e.g. "/definitions/Foo") in a JSON value.
-fn pointer_lookup<'a>(root: &'a Json, pointer: &str) -> Option<&'a Json> {
-    if pointer.is_empty() || pointer == "/" {
-        return Some(root);
-    }
-    let segments = pointer.strip_prefix('/')?.split('/');
-    let mut current = root;
-    for seg in segments {
-        // Unescape JSON pointer encoding (~0 = ~, ~1 = /)
-        let unescaped = seg.replace("~1", "/").replace("~0", "~");
-        current = current.get(&unescaped)?;
-    }
-    Some(current)
 }
 
 /// Return a human-readable type string for the schema (e.g. `"all" | integer[]`).

@@ -74,3 +74,13 @@ fn whitespace_and_comments_resolve_to_enclosing_collection() {
     assert_eq!(path_at(input, "# note", 0), ["a"]);
     assert_eq!(path_at(input, "a:", 0), ["a"]);
 }
+
+#[test]
+fn node_at_pointer_unescapes_segments() {
+    let input = "a/b:\n  c~d: [x, y]";
+    let node = parse(input).unwrap();
+    let span = locate::node_at_pointer(&node, "/a~1b/c~0d/1").unwrap().span;
+    assert_eq!(&input[span.start..span.end], "y");
+    assert!(locate::node_at_pointer(&node, "").is_some());
+    assert!(locate::node_at_pointer(&node, "/missing").is_none());
+}

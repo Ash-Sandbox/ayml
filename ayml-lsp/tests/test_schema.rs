@@ -47,7 +47,7 @@ fn host_type() {
     let root = load_policy_schema();
     let sub = schema::resolve_sub_schema(&root, &["network", "rules", "0", "host"]).unwrap();
     let content = schema::hover_content(&root, sub).unwrap();
-    assert!(!content.is_empty());
+    assert_ne!(content, "");
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn action_type() {
     let root = load_policy_schema();
     let sub = schema::resolve_sub_schema(&root, &["network", "rules", "0", "action"]).unwrap();
     let content = schema::hover_content(&root, sub).unwrap();
-    assert!(!content.is_empty());
+    assert_ne!(content, "");
 }
 
 #[test]
@@ -90,4 +90,19 @@ fn cyclic_schemas_terminate() {
     assert!(schema::resolve_sub_schema(&root, &["a", "b"]).is_none());
     assert!(schema::type_string(&root, &root).is_none());
     let _ = schema::hover_content(&root, &root);
+}
+
+#[test]
+fn chained_and_cyclic_refs_resolve() {
+    let root: Json = serde_json::json!({
+        "properties": { "a": { "$ref": "#/$defs/A" }, "loop": { "$ref": "#/$defs/L" } },
+        "$defs": {
+            "A": { "$ref": "#/$defs/B" },
+            "B": { "type": "integer", "description": "the b" },
+            "L": { "$ref": "#/$defs/L" }
+        }
+    });
+    let sub = schema::resolve_sub_schema(&root, &["a"]).unwrap();
+    assert_eq!(sub["description"], "the b");
+    assert!(schema::resolve_sub_schema(&root, &["loop"]).is_some());
 }

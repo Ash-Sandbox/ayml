@@ -65,3 +65,25 @@ pub fn token_spans(node: &Node, out: &mut Vec<Span>) {
         _ => out.push(node.span),
     }
 }
+
+/// The node at a JSON pointer (RFC 6901), such as `/servers/0/port`.
+pub fn node_at_pointer<'a>(root: &'a Node, pointer: &str) -> Option<&'a Node> {
+    if pointer.is_empty() {
+        return Some(root);
+    }
+    pointer
+        .strip_prefix('/')?
+        .split('/')
+        .try_fold(root, |node, segment| {
+            child(node, &segment.replace("~1", "/").replace("~0", "~"))
+        })
+}
+
+/// The child of a mapping (by key) or sequence (by index).
+pub fn child<'a>(node: &'a Node, segment: &str) -> Option<&'a Node> {
+    match &node.value {
+        Value::Map(map) => map.get(segment),
+        Value::Seq(items) => items.get(segment.parse::<usize>().ok()?),
+        _ => None,
+    }
+}
