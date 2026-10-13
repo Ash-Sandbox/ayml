@@ -270,45 +270,21 @@ impl From<&Node> for Value {
 
 #[cfg(feature = "schemars")]
 impl schemars::JsonSchema for Value {
-    fn schema_name() -> String {
-        "Value".to_owned()
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Value".into()
     }
 
-    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
-        use schemars::schema::{InstanceType, Schema, SchemaObject, SingleOrVec};
-
-        let any_of = vec![
-            generator.subschema_for::<()>(),
-            generator.subschema_for::<bool>(),
-            generator.subschema_for::<i64>(),
-            generator.subschema_for::<f64>(),
-            generator.subschema_for::<String>(),
-            Schema::Object(SchemaObject {
-                instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Array))),
-                array: Some(Box::new(schemars::schema::ArrayValidation {
-                    items: Some(schemars::schema::SingleOrVec::Single(Box::new(
-                        generator.subschema_for::<Self>(),
-                    ))),
-                    ..Default::default()
-                })),
-                ..Default::default()
-            }),
-            Schema::Object(SchemaObject {
-                instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
-                object: Some(Box::new(schemars::schema::ObjectValidation {
-                    additional_properties: Some(Box::new(generator.subschema_for::<Self>())),
-                    ..Default::default()
-                })),
-                ..Default::default()
-            }),
-        ];
-
-        Schema::Object(SchemaObject {
-            subschemas: Some(Box::new(schemars::schema::SubschemaValidation {
-                any_of: Some(any_of),
-                ..Default::default()
-            })),
-            ..Default::default()
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "anyOf": [
+                generator.subschema_for::<()>(),
+                generator.subschema_for::<bool>(),
+                generator.subschema_for::<i64>(),
+                generator.subschema_for::<f64>(),
+                generator.subschema_for::<String>(),
+                { "type": "array", "items": generator.subschema_for::<Self>() },
+                { "type": "object", "additionalProperties": generator.subschema_for::<Self>() },
+            ]
         })
     }
 }

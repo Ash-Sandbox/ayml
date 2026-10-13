@@ -33,13 +33,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let init_params = connection.initialize(serde_json::to_value(&capabilities)?)?;
     let _init_params: InitializeParams = serde_json::from_value(init_params)?;
 
-    main_loop(&connection)?;
+    main_loop(connection)?;
 
     io_threads.join()?;
     Ok(())
 }
 
-fn main_loop(connection: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+fn main_loop(connection: Connection) -> Result<(), Box<dyn std::error::Error>> {
     let mut documents: HashMap<Uri, String> = HashMap::new();
     let mut schemas = SchemaCache::new();
 
@@ -68,7 +68,7 @@ fn main_loop(connection: &Connection) -> Result<(), Box<dyn std::error::Error>> 
                 lsp_types::notification::DidOpenTextDocument::METHOD => {
                     let params: DidOpenTextDocumentParams = serde_json::from_value(not.params)?;
                     let doc = params.text_document;
-                    publish_diagnostics(connection, doc.uri.clone(), &doc.text, &mut schemas)?;
+                    publish_diagnostics(&connection, doc.uri.clone(), &doc.text, &mut schemas)?;
                     documents.insert(doc.uri, doc.text);
                 }
                 lsp_types::notification::DidChangeTextDocument::METHOD => {
@@ -76,7 +76,7 @@ fn main_loop(connection: &Connection) -> Result<(), Box<dyn std::error::Error>> 
                     // With full sync, the last change holds the whole document.
                     if let Some(change) = params.content_changes.into_iter().last() {
                         let uri = params.text_document.uri;
-                        publish_diagnostics(connection, uri.clone(), &change.text, &mut schemas)?;
+                        publish_diagnostics(&connection, uri.clone(), &change.text, &mut schemas)?;
                         documents.insert(uri, change.text);
                     }
                 }
@@ -89,7 +89,8 @@ fn main_loop(connection: &Connection) -> Result<(), Box<dyn std::error::Error>> 
                         version: None,
                     };
                     send_notification::<lsp_types::notification::PublishDiagnostics>(
-                        connection, params,
+                        &connection,
+                        params,
                     )?;
                 }
                 _ => {}

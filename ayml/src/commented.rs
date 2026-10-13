@@ -269,7 +269,11 @@ impl<'de, T: Deserialize<'de>> Visitor<'de> for CommentedVisitor<T> {
 
 #[cfg(feature = "schemars")]
 impl<T: schemars::JsonSchema> schemars::JsonSchema for Commented<T> {
-    fn schema_name() -> String {
+    fn inline_schema() -> bool {
+        T::inline_schema()
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
         T::schema_name()
     }
 
@@ -277,11 +281,7 @@ impl<T: schemars::JsonSchema> schemars::JsonSchema for Commented<T> {
         T::schema_id()
     }
 
-    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         T::json_schema(generator)
-    }
-
-    fn is_referenceable() -> bool {
-        T::is_referenceable()
     }
 }
