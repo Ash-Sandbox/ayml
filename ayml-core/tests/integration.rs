@@ -1,4 +1,4 @@
-//! Fixture files in `files/`.
+//! Fixture files in `examples/`.
 
 mod common;
 
@@ -8,9 +8,9 @@ use ayml_core::{Value, directive, emit, parse};
 use common::{get, items, ok};
 
 fn fixtures() -> Vec<(String, String)> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../files");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples");
     let mut out: Vec<(String, String)> = std::fs::read_dir(&dir)
-        .expect("files/ directory")
+        .expect("examples/ directory")
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.extension().is_some_and(|e| e == "ayml"))
         .map(|path| {

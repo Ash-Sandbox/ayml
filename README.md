@@ -81,17 +81,6 @@ To support comments in serde parsing, wrap a field in `ayml::Commented<T>`.
 
 AYML is tested with unit tests, integration tests, property tests, and fuzz tests. All but fuzz tests run with `cargo t`.
 
-Property tests check, among other things, that:
-
-- `parse(emit(tree))` emits canonical form and is idempotent
-- documents rendered with random styles are re-parsed correctly
-- JSON written by `serde_json` is parsed correctly as AYML
-- typed values and comments are parsed and re-emitted correctly
-- streaming and non-streaming (de)serialization produce identical output
-- invalid input never causes a panic
-
-Set `PROPTEST_CASES` to run more cases, for example `PROPTEST_CASES=100000 cargo test --release`.
-
 #### Fuzzing
 
 To run fuzz tests:
