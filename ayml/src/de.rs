@@ -263,11 +263,15 @@ impl<'de, E: Events<'de>> Deserializer<'de, E> {
         let count = access.count;
         let extra = self.skip_entries()?;
         if extra > 0 {
-            return Err(de::Error::invalid_length(
-                count + extra,
-                &format!("{count} elements in sequence").as_str(),
-            ))
-            .map_err(|e: Error| e.at(Span::point(start)));
+            let expected = if count == 1 {
+                "1 element".to_owned()
+            } else {
+                format!("{count} elements")
+            };
+            return Err(
+                <Error as de::Error>::invalid_length(count + extra, &expected.as_str())
+                    .at(Span::point(start)),
+            );
         }
         Ok(value)
     }
@@ -302,6 +306,23 @@ impl<'de, E: Events<'de>> Deserializer<'de, E> {
                 let _ = self.skip_entries();
                 Error::invalid_type_at(Unexpected::Map, visitor, start)
             }
+        }
+    }
+
+    /// Read a float or integer; `fits` rejects finite floats that the target
+    /// type would round to infinity.
+    fn float<V: Visitor<'de>>(&mut self, visitor: V, fits: fn(f64) -> bool) -> Result<V::Value> {
+        match self.head()? {
+            Head::Scalar(Scalar::Float(f), span) if fits(f) => {
+                visitor.visit_f64(f).map_err(|e: Error| e.at(span))
+            }
+            Head::Scalar(Scalar::Float(f), span) => {
+                Err(<Error as de::Error>::invalid_value(Unexpected::Float(f), &visitor).at(span))
+            }
+            Head::Scalar(Scalar::Int(i), span) => {
+                visitor.visit_i64(i).map_err(|e: Error| e.at(span))
+            }
+            head => Err(self.invalid_head(head, &visitor)),
         }
     }
 
@@ -376,19 +397,11 @@ impl<'de, E: Events<'de>> de::Deserializer<'de> for &mut Deserializer<'de, E> {
     }
 
     fn deserialize_f32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
-        self.deserialize_f64(visitor)
+        self.float(visitor, |f| !f.is_finite() || (f as f32).is_finite())
     }
 
     fn deserialize_f64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
-        match self.head()? {
-            Head::Scalar(Scalar::Float(f), span) => {
-                visitor.visit_f64(f).map_err(|e: Error| e.at(span))
-            }
-            Head::Scalar(Scalar::Int(i), span) => {
-                visitor.visit_i64(i).map_err(|e: Error| e.at(span))
-            }
-            head => Err(self.invalid_head(head, &visitor)),
-        }
+        self.float(visitor, |_| true)
     }
 
     fn deserialize_char<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
@@ -635,22 +648,24 @@ impl<'a, 'de, E: Events<'de>> de::EnumAccess<'de> for EnumAccess<'a, 'de, E> {
         let variant = seed
             .deserialize(KeyDeserializer::new(self.name))
             .map_err(|e: Error| e.at(span))?;
-        Ok((variant, VariantAccess { de: self.de }))
+        Ok((variant, VariantAccess { de: self.de, span }))
     }
 }
 
 struct VariantAccess<'a, 'de, E> {
     de: &'a mut Deserializer<'de, E>,
+    /// The span of the variant name.
+    span: Span,
 }
 
 impl<'de, E: Events<'de>> de::VariantAccess<'de> for VariantAccess<'_, 'de, E> {
     type Error = Error;
 
     fn unit_variant(self) -> Result<()> {
-        Err(de::Error::invalid_type(
-            Unexpected::Map,
-            &"a string for a unit variant",
-        ))
+        Err(
+            <Error as de::Error>::invalid_type(Unexpected::Map, &"a string for a unit variant")
+                .at(self.span),
+        )
     }
 
     fn newtype_variant_seed<T: de::DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value> {

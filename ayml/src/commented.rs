@@ -41,8 +41,12 @@ pub(crate) const FIELDS: &[&str] = &[
 /// ```
 ///
 /// Comments follow comment association rules; see [`ayml_core::Node`].
-/// If a sequence entry is not itself `Commented`, the comment above its
-///  `-` is given to its first field that is `Commented`.
+/// If the root or a sequence entry is not itself `Commented`, its leading
+/// comment is given to its first entry if that entry is `Commented`.
+///
+/// Serde buffers the input of `#[serde(flatten)]` fields and of internally
+/// tagged and untagged enums, so a `Commented<T>` inside them is
+/// deserialized without comments.
 ///
 /// `Commented<T>` is transparent to all non-AYML serde crates.
 #[derive(Debug, Clone, PartialEq, Default)]

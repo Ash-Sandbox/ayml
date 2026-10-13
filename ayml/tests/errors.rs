@@ -99,6 +99,16 @@ fn integer_ranges() {
 }
 
 #[test]
+fn floats_that_overflow_f32_are_errors() {
+    let (line, column, message) = location::<Vec<f32>>("- 1.0\n- -1e39");
+    assert_eq!((line, column), (2, 3));
+    assert!(message.ends_with("expected f32"), "{message}");
+    assert_eq!(from_str::<f32>("3.4028235e38").unwrap(), f32::MAX);
+    assert_eq!(from_str::<f32>("-inf").unwrap(), f32::NEG_INFINITY);
+    assert_eq!(from_str::<f64>("1e39").unwrap(), 1e39);
+}
+
+#[test]
 fn chars_need_exactly_one_character() {
     assert!(from_str::<char>("ab").is_err());
     assert!(from_str::<char>(r#""""#).is_err());
@@ -106,7 +116,14 @@ fn chars_need_exactly_one_character() {
 
 #[test]
 fn tuple_length_must_match() {
-    assert!(from_str::<(i32, i32)>("[1, 2, 3]").is_err());
+    assert_eq!(
+        location::<(i32, i32)>("[1, 2, 3]").2,
+        "1:1: invalid length 3, expected 2 elements"
+    );
+    assert_eq!(
+        location::<(i32,)>("[1, 2]").2,
+        "1:1: invalid length 2, expected 1 element"
+    );
     assert!(from_str::<(i32, i32)>("[1]").is_err());
 }
 
@@ -128,6 +145,10 @@ fn enum_errors() {
     assert!(from_str::<E>("C").is_err());
     assert!(from_str::<E>("{A: 1, B: 2}").is_err());
     assert!(from_str::<E>("A: 1").is_err());
+    assert_eq!(
+        location::<E>("\nA: null").2,
+        "2:1: invalid type: map, expected a string for a unit variant"
+    );
     assert!(from_str::<E>("B").is_err());
     assert!(from_str::<E>("42").is_err());
 }
