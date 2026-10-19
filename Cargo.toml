@@ -19,8 +19,8 @@ repository = "https://github.com/alex-shapiro/ayml"
 ayml-core = { path = "ayml-core", version = "0.1.0" }
 ayml-testgen = { path = "ayml-testgen" }
 criterion = "0.8"
-indexmap = "2.13.0"
-jsonschema = { version = "0.58", default-features = false }
+indexmap = "2.14.2"
+jsonschema = { version = "0.59", default-features = false }
 lsp-server = "0.10"
 lsp-types = "0.97"
 proptest = "1"
@@ -30,7 +30,7 @@ schemars = "1"
 serde = "1"
 serde_bytes = "0.11"
 serde_json = "1"
-thiserror = "2.0.18"
+thiserror = "2.0.21"
 ureq = "3"
 
 [workspace.lints.clippy]
