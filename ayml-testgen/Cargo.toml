@@ -1,7 +1,10 @@
 [package]
 name = "ayml-testgen"
-version = "0.0.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 publish = false
 description = "Property-test generators shared by AYML test suites"
 
@@ -9,6 +12,6 @@ description = "Property-test generators shared by AYML test suites"
 workspace = true
 
 [dependencies]
-ayml-core = { path = "../ayml-core" }
-indexmap = "2.13.0"
-proptest = "1"
+ayml-core.workspace = true
+indexmap.workspace = true
+proptest.workspace = true

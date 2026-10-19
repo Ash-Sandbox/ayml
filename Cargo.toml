@@ -8,9 +8,33 @@ members = [
 resolver = "3"
 exclude = ["editors/zed"]
 
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Alex Shapiro"]
+repository = "https://github.com/alex-shapiro/ayml"
+
+[workspace.dependencies]
+ayml-core = { path = "ayml-core", version = "0.1.0" }
+ayml-testgen = { path = "ayml-testgen" }
+criterion = "0.8"
+indexmap = "2.13.0"
+jsonschema = { version = "0.58", default-features = false }
+lsp-server = "0.10"
+lsp-types = "0.97"
+proptest = "1"
+proptest-derive = "0.9"
+ryu = "1"
+schemars = "1"
+serde = "1"
+serde_bytes = "0.11"
+serde_json = "1"
+thiserror = "2.0.18"
+ureq = "3"
+
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
-# Allow these common pedantic lints that add noise without value.
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
@@ -21,7 +45,5 @@ cast_precision_loss = "allow"
 needless_pass_by_value = "allow"
 return_self_not_must_use = "allow"
 
-# Property tests generate and parse many thousands of documents;
-# a little optimization keeps `cargo t` fast.
 [profile.test]
 opt-level = 1

@@ -1,11 +1,11 @@
 [package]
 name = "ayml"
-version = "0.1.0"
-edition = "2024"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 description = "simplified YAML variant"
-authors = ["Alex Shapiro"]
-repository = "https://github.com/alex-shapiro/ayml"
 readme = "../README.md"
 keywords = ["ayml", "yaml"]
 categories = ["config", "parsing"]
@@ -17,20 +17,20 @@ schemars = ["dep:schemars"]
 workspace = true
 
 [dependencies]
-ayml-core = { path = "../ayml-core", version = "0.1.0" }
-indexmap = { version = "2.13.0", features = ["serde"] }
-ryu = "1"
-schemars = { version = "1", features = ["indexmap2"], optional = true }
-serde = { version = "1", features = ["derive"] }
-thiserror = "2.0.18"
+ayml-core.workspace = true
+indexmap = { workspace = true, features = ["serde"] }
+ryu.workspace = true
+schemars = { workspace = true, features = ["indexmap2"], optional = true }
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
 
 [dev-dependencies]
-ayml-testgen = { path = "../ayml-testgen" }
-criterion = { version = "0.8", features = ["html_reports"] }
-proptest = "1"
-proptest-derive = "0.9"
-serde_bytes = "0.11"
-serde_json = "1"
+ayml-testgen.workspace = true
+criterion = { workspace = true, features = ["html_reports"] }
+proptest.workspace = true
+proptest-derive.workspace = true
+serde_bytes.workspace = true
+serde_json.workspace = true
 
 [[bench]]
 name = "serde"
