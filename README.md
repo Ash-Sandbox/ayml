@@ -35,13 +35,13 @@ network:
 
 ## Goals
 
-Design goals, starting with most important:
+Design goals, prioritized:
 
-1. it is easy to read and understand structured data
-2. it is easy to write correctly, and hard to write incorrectly
-3. it deserializes naturally into strongly typed data structures
-4. it deserializes naturally into the core types of dynamically typed languages
-5. it incorporates comments as a formal part of the document structure
+1. simple to read and understand structured data
+2. simple to write correctly, hard to write incorrectly
+3. deserializes naturally into strongly typed data structures
+4. deserializes naturally into dynamic language core types
+5. parses comments as a formal part of the document structure
 
 ## Omitted
 
@@ -59,31 +59,15 @@ Design goals, starting with most important:
 - single-quoted strings and block scalars
 - non-string keys
 
-## Comments
-
-Each comment belongs to one node:
-
-- comment lines above a node belong to that node
-- a comment at the end of a line belongs to the node that ends on that line
-- comment lines after the last entry of a collection belong to that collection
-
-Comments can be parsed and re-emitted alongside their nodes.
-To support comments in serde parsing, wrap a field in `ayml::Commented<T>`.
-
-## Crates
-
-- `ayml-core` is the reference parser and emitter
-- `ayml` provides serde support.
-- `ayml-lsp` is a language server with schema validation and hover.
-- `ayml-testgen` holds shared property test generators.
-
 ## Testing
 
-AYML is tested with unit tests, integration tests, property tests, and fuzz tests. All but fuzz tests run with `cargo t`.
+Run unit, integration, and property tests:
 
-#### Fuzzing
+```bash
+cargo test
+```
 
-To run fuzz tests:
+Run fuzz tests:
 
 ```bash
 rustup toolchain install nightly
@@ -96,10 +80,10 @@ cargo +nightly fuzz run fuzz_deserialize
 # Parse, serialize, and parse again with serde
 cargo +nightly fuzz run fuzz_roundtrip
 
-# Parse with ayml-core and check that round trips produce identical output
+# Parse and check that round trips produce identical output
 cargo +nightly fuzz run fuzz_core_roundtrip
 
-# Deserialize arbitrary bytes into a struct with many field types
+# Deserialize arbitrary bytes into a struct
 cargo +nightly fuzz run fuzz_typed
 
 # Check that streaming and tree-based deserialization produce identical output
@@ -109,23 +93,13 @@ cargo +nightly fuzz run fuzz_streaming_vs_tree
 cargo +nightly fuzz run fuzz_deserialize -- -max_total_time=300
 ```
 
-Fuzz test crashes are saved to `fuzz/artifacts/<target>/`. Reproduce with:
-
-```bash
-cargo +nightly fuzz run fuzz_deserialize fuzz/artifacts/fuzz_deserialize/crash-<hash>
-```
-
-#### Benchmarking
+Run benchmarks:
 
 ```sh
-# benchmark ayml
 cargo bench
-
-# benchmark ayml against serde_json
-cargo bench --bench serde_comparison
 ```
 
-All tests performed on a Macbook Pro M4 Max. Deserialization benchmarks use typed variations. Deserialization into an untyped value is roughly half as fast.
+All tests performed on a Macbook Pro M4 Max. Deserialization benchmarks are typed. Deserialization into an untyped value is roughly half as fast.
 
 | Benchmark   | Deserialize | Serialize |
 | ----------- | ----------- | --------- |
@@ -135,7 +109,7 @@ All tests performed on a Macbook Pro M4 Max. Deserialization benchmarks use type
 | strings     | 445 MiB/s   | 824 MiB/s |
 | large_50    | 262 MiB/s   | 535 MiB/s |
 
-If you need max performance, consider `serde_json`. Comparative benchmarks show it is about 2-3x faster than AYML.
+If max performance is a requirement, consider `serde_json`. Comparative benchmarks show it is about 2-3x faster than AYML.
 
 ## Acknowledgements
 
